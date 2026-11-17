@@ -1,0 +1,10 @@
+/build/
+/build-*/
+/out/
+/CMakeUserPresets.json
+/.idea/
+/.vscode/
+/.qtcreator/
+*.user
+.DS_Store
+Thumbs.db
