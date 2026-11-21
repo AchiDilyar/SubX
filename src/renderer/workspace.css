@@ -34,6 +34,7 @@
   --text-lg: 15px;
   --row-hover: #262626;
   --focus: #4a86d8;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%23b9c2cf' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -44,6 +45,12 @@ input:is([type=text], [type=number], :not([type])), textarea, [contenteditable="
 button, select, input, textarea { font: inherit; color: inherit; }
 button, select, input:not([type=range]), textarea {
   border: 1px solid var(--control-border); border-radius: var(--radius-control); background: var(--control); padding: 4px 8px;
+}
+/* 所有下拉框共用同一套箭头，和画质选择保持一致。 */
+select {
+  appearance: none; -webkit-appearance: none;
+  padding-right: 26px; background-image: var(--select-arrow);
+  background-repeat: no-repeat; background-position: right 8px center;
 }
 button, select { cursor: pointer; }
 /* 字幕块的状态必须瞬时切换，不参与按钮的过渡动画。 */
@@ -370,7 +377,7 @@ dialog h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; letter-spaci
 #play, #undo, #redo { width: 28px; padding-inline: 0; }
 #play, .monitor-controls #fullscreen-preview { display: grid; place-items: center; background: transparent; border-color: transparent; color: #d9dfe8; }
 #play:hover:not(:disabled), .monitor-controls #fullscreen-preview:hover:not(:disabled) { background: transparent; color: #fff; }
-#quality { appearance: none; -webkit-appearance: none; height: 27px; min-width: 68px; padding: 0 27px 0 9px; background-color: #292929; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%23b9c2cf' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; cursor: pointer; }
+#quality { height: 27px; min-width: 68px; padding: 0 27px 0 9px; background-color: #292929; cursor: pointer; }
 #quality:hover { background-color: #383838; }
 #quality:focus-visible { border-color: var(--accent); }
 #play .icon { fill: currentColor; width: 14px; }
