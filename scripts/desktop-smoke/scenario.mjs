@@ -1540,6 +1540,20 @@ async function run() {
   await click('new-project')
   await expect('document.querySelectorAll(".track-lane").length === 2 && !document.querySelector("video").getAttribute("src")', 'start a blank video project')
 
+  // 没有帧索引时，播放头也必须落在标尺最小刻度上。
+  const emptyRuler = await exec(`(() => {
+    const area = document.querySelector('#timeline-scroll').getBoundingClientRect()
+    const heads = document.querySelector('#track-headings').getBoundingClientRect().right
+    const ruler = document.querySelector('#ruler').getBoundingClientRect()
+    return { x: heads + (area.right - heads) * 0.37, y: ruler.top + 7 }
+  })()`)
+  await mouse('mousePressed', emptyRuler.x, emptyRuler.y)
+  await mouse('mouseReleased', emptyRuler.x, emptyRuler.y)
+  await expect(`(() => {
+    const head = document.querySelector('#playhead').style.left
+    return Boolean(head) && [...document.querySelectorAll('#ruler .tick')].some(tick => tick.style.left === head)
+  })()`, 'land the playhead on the smallest ruler tick without a frame index')
+
   await click('blank-video')
   await expect('document.querySelector("#blank-video-dialog").open', 'open the blank video dialog')
   await exec(`(() => {
@@ -1554,10 +1568,24 @@ async function run() {
     !document.querySelector('#solid-frame').hidden && document.querySelector('#media-name').textContent.includes('1280×720') &&
     document.querySelector('#media-name').textContent.includes('25 fps')`, 'show the blank video preview')
   await expect('document.querySelector("#play").disabled === false && document.querySelector("#ruler").dataset.frameIndex === "ready"', 'enable playback and frame ticks for the blank video')
+  const frameRuler = await exec(`(() => {
+    const area = document.querySelector('#timeline-scroll').getBoundingClientRect()
+    const heads = document.querySelector('#track-headings').getBoundingClientRect().right
+    const ruler = document.querySelector('#ruler').getBoundingClientRect()
+    return { x: heads + (area.right - heads) * 0.61, y: ruler.top + 7 }
+  })()`)
+  await mouse('mousePressed', frameRuler.x, frameRuler.y)
+  await mouse('mouseReleased', frameRuler.x, frameRuler.y)
+  await expect(`(() => {
+    const ms = Math.round(Number(document.querySelector('#timecode').value.split(':')[2]) * 1000)
+    return ms > 0 && ms % 40 === 0
+  })()`, 'land the playhead on a video frame boundary')
   await exec('document.querySelector("#play").click()')
   await delay(500)
   await exec('document.querySelector("#play").click()')
-  assert.notEqual(await exec('document.querySelector("#timecode").value'), '00:00:00.000', 'Advance the playhead while the blank video plays')
+  const blankTime = await exec('document.querySelector("#timecode").value')
+  assert.notEqual(blankTime, '00:00:00.000', 'Advance the playhead while the blank video plays')
+  assert.equal(Math.round(Number(blankTime.split(':')[2]) * 1000) % 40, 0, 'Land the paused playhead on a frame boundary: ' + blankTime)
 
   await click('compose-video')
   await expect(`document.querySelector('#composition-dialog').open &&

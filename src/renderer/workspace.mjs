@@ -77,6 +77,16 @@ const undo = []
 const redo = []
 const width = timeMs => timeMs * pixelsPerSecond / 1000
 const deltaFor = px => Math.round(px * 1000 / pixelsPerSecond)
+// 标尺主刻度间隔：与 renderRuler 共用，决定主刻度与标签的间距。
+function rulerInterval() {
+  return [100, 250, 500, 1000, 2000, 5000, 10000, 30000, 60000, 300000, 900000]
+    .find(step => width(step) >= 95) ?? 3600000
+}
+// 没有帧索引时的最小刻度：优先 100 ms，放大到刻度挤不下时退回主刻度的 1/5。
+function rulerMinor() {
+  const fallback = rulerInterval() / 5
+  return width(100) >= 8 ? Math.min(100, fallback) : fallback
+}
 // 字幕块视觉高度等于轨道行高（CSS 的 .cue 高度与此保持一致）。
 const CUE_HEIGHT = 32
 const CUE_LANE_GAP = 0
@@ -616,6 +626,7 @@ const playbackPaused = () => isSolid() ? !solidPlaying : video.paused
 function pausePlayback() {
   if (isSolid()) pauseSolidClock()
   else video.pause()
+  snapPlayhead()
 }
 async function startPlayback() {
   if (isSolid()) startSolidClock()
@@ -664,6 +675,35 @@ function pauseSolidClock() {
   time = Math.round(solidElapsed())
   stopSolidClock()
   syncPlayback()
+  updatePreview()
+}
+
+// 播放头始终落在时间轴的最小刻度上：有帧索引时按帧，否则按标尺最小刻度。
+function snapRulerTime(value) {
+  if (frameTimes?.length) return Math.round(value)
+  const step = rulerMinor()
+  return Math.round(value / step) * step
+}
+function snapPlayheadTime(value) {
+  const rounded = Math.round(value)
+  if (frameTimes?.length) {
+    const boundaries = editingBoundaries()
+    if (boundaries.length >= 2) return nearestBoundary(boundaries, rounded) ?? rounded
+    return rounded
+  }
+  return snapRulerTime(rounded)
+}
+function snapPlayhead() {
+  const snapped = snapPlayheadTime(time)
+  if (snapped === time) return
+  time = snapped
+  presentedFrameTime = null
+  if (isSolid()) {
+    solidStartTime = time
+    solidStartedAt = performance.now()
+  } else if (video.readyState) {
+    video.currentTime = snapped / 1000
+  }
   updatePreview()
 }
 
@@ -888,8 +928,7 @@ function timelineView() {
 }
 
 function renderRuler(start, end, limit, trackData) {
-  const interval = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, 60000, 300000, 900000]
-    .find(step => width(step) >= 95) ?? 3600000
+  const interval = rulerInterval()
   trackData.style.setProperty('--tick-size', width(interval) + 'px')
   const framesVisible = frameTimes?.length
   const ticks = []
@@ -913,7 +952,7 @@ function renderRuler(start, end, limit, trackData) {
       tick(at, showLabel ? printTime(Math.round(at), '.') : '', ' frame-tick')
     }
   } else {
-    const minor = interval / 5
+    const minor = rulerMinor()
     for (let at = Math.floor(start / minor) * minor; at < limit && at <= end; at += minor) {
       const major = at % interval === 0
       const printLabel = major && (at === 0 || !nearEndLabel(at))
@@ -2833,7 +2872,7 @@ function setPreviewMaximized(maximize) {
 }
 action('fullscreen-preview', () => setPreviewMaximized(!monitor.classList.contains('preview-maximized')))
 $('preview-progress').addEventListener('input', event => {
-  if (mediaDuration && hasPicture()) seek(mediaDuration * Number(event.target.value) / 1000)
+  if (mediaDuration && hasPicture()) seek(snapPlayheadTime(mediaDuration * Number(event.target.value) / 1000))
 })
 function syncPlayback() {
   const paused = playbackPaused()
@@ -2843,7 +2882,7 @@ function syncPlayback() {
 }
 video.addEventListener('play', () => { rulerFrame = undefined; syncPlayback() })
 video.addEventListener('pause', syncPlayback)
-video.addEventListener('ended', syncPlayback)
+video.addEventListener('ended', () => { syncPlayback(); snapPlayhead() })
 video.addEventListener('loadedmetadata', () => {
   if (isSolid()) return
   mediaDuration = Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : 0
@@ -2937,7 +2976,7 @@ function seekWithPointer(event) {
   pausePlayback()
   const bounds = scroll.getBoundingClientRect()
   const x = Math.max(bounds.left + $('track-headings').offsetWidth, Math.min(bounds.right - 1, event.clientX))
-  seekFrame((x - ruler.getBoundingClientRect().left) * 1000 / pixelsPerSecond)
+  seekFrame(snapRulerTime((x - ruler.getBoundingClientRect().left) * 1000 / pixelsPerSecond))
 }
 function scrollRulerPointer() {
   if (!rulerPointer) return
