@@ -188,6 +188,22 @@ function setActiveMedia(window, token) {
   if (token) activeMedia.set(window, token)
 }
 
+// 访达双击 .subx 时先排队，等渲染进程就绪再交给它打开。
+const pendingOpenPaths = []
+function openPathFromSystem(file) {
+  if (!file || !/\.subx$/i.test(file)) return
+  const [window] = BrowserWindow.getAllWindows()
+  if (window && !window.webContents.isLoadingMainFrame()) window.webContents.send('app:open-path', file)
+  else pendingOpenPaths.push(file)
+}
+app.on('open-file', (event, file) => {
+  event.preventDefault()
+  openPathFromSystem(file)
+})
+// 命令行参数里带的工程路径：Windows 文件关联和终端启动都会走这里。
+const argvProject = process.argv.slice(1).find(argument => /\.subx$/i.test(argument))
+if (argvProject) pendingOpenPaths.push(argvProject)
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1420,
@@ -246,6 +262,9 @@ function createWindow() {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', event => event.preventDefault())
   window.loadURL(entry)
+  window.webContents.on('did-finish-load', () => {
+    while (pendingOpenPaths.length) window.webContents.send('app:open-path', pendingOpenPaths.shift())
+  })
 }
 
 async function initialize() {
@@ -315,10 +334,8 @@ async function initialize() {
   }
   bind('subtitles:choose', window => chooseText(window, '字幕', ['srt', 'ass']))
   bind('script:choose', window => chooseText(window, '文稿', ['txt']))
-  bind('project:open', async (window, recent) => {
+  async function readProject(window, file) {
     const session = mediaSessions.get(window)
-    const file = recent === undefined ? await selectFile(window, 'SubX 工程', ['subx']) : recent
-    if (!file || recent !== undefined && !projects.has(file)) return null
     let contents
     let project
     let location
@@ -337,6 +354,16 @@ async function initialize() {
     releaseMedia(pendingMedia, window)
     setActiveMedia(window, media?.token)
     return { project, media, document: rememberDocument(window, location, contents) }
+  }
+  bind('project:open', async (window, recent) => {
+    const file = recent === undefined ? await selectFile(window, 'SubX 工程', ['subx']) : recent
+    if (!file || recent !== undefined && !projects.has(file)) return null
+    return readProject(window, file)
+  })
+  // 访达双击或命令行传入的工程路径，不受“最近工程”列表限制。
+  bind('project:open-path', (window, file) => {
+    if (typeof file !== 'string' || !/\.subx$/i.test(file)) return null
+    return readProject(window, file)
   })
   bind('project:recent', () => [...projects].reverse())
   async function saveProject(window, project, documentId, saveAs) {
@@ -524,12 +551,15 @@ if (!hasSingleInstanceLock) {
 } else if (process.platform === 'win32' && require('electron-squirrel-startup')) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
     const [window] = BrowserWindow.getAllWindows()
     if (!window) return
     if (window.isMinimized()) window.restore()
     window.show()
     window.focus()
+    // Windows 会把双击的文件路径作为参数传给已有实例。
+    const file = argv.find(argument => /\.subx$/i.test(argument))
+    if (file) window.webContents.send('app:open-path', file)
   })
   if (process.platform === 'win32') app.setAppUserModelId('com.squirrel.SubX.SubX')
   app.whenReady().then(initialize).catch(error => {

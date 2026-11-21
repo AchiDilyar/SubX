@@ -4,6 +4,11 @@ contextBridge.exposeInMainWorld('subx', {
   hasInsetWindowControls: process.platform === 'darwin',
   updateMenu: groups => ipcRenderer.send('menu:update', groups),
   onMenuCommand: callback => ipcRenderer.on('menu:command', (_event, id) => callback(id)),
+  onOpenPath: callback => {
+    const listener = (_event, path) => callback(path)
+    ipcRenderer.on('app:open-path', listener)
+    return () => ipcRenderer.removeListener('app:open-path', listener)
+  },
   getVersion: () => ipcRenderer.invoke('app:version'),
   openExternal: url => ipcRenderer.invoke('app:open-external', url),
   quit: () => ipcRenderer.send('app:quit'),
@@ -22,6 +27,7 @@ contextBridge.exposeInMainWorld('subx', {
   chooseSubtitles: () => ipcRenderer.invoke('subtitles:choose'),
   chooseScript: () => ipcRenderer.invoke('script:choose'),
   openProject: recent => ipcRenderer.invoke('project:open', recent),
+  openProjectPath: file => ipcRenderer.invoke('project:open-path', file),
   recentProjects: () => ipcRenderer.invoke('project:recent'),
   saveProject: (project, documentId, saveAs, id) => ipcRenderer.invoke('project:save', project, documentId, saveAs, id),
   finishProjectSave: id => ipcRenderer.invoke('project:save-finished', id),

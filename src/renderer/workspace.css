@@ -421,7 +421,7 @@ dialog h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; letter-spaci
 #styles-list { display: grid; gap: 6px; }
 .style-list-item {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1.1fr) minmax(0, 1fr) 29px auto;
+  grid-template-columns: 64px minmax(0, 1.1fr) minmax(0, 1fr) 29px auto;
   align-items: center;
   gap: 8px;
   padding: 6px;

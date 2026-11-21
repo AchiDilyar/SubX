@@ -1638,7 +1638,8 @@ function renderStyleList(projectChanged = false) {
       preview.style.justifyContent = ['flex-start', 'center', 'flex-end'][(alignment - 1) % 3]
       preview.style.alignItems = ['flex-end', 'center', 'flex-start'][Math.floor((alignment - 1) / 3)]
       text.style.fontFamily = property('Fontname') || ''
-      text.style.fontSize = Math.max(9, Math.min(19, (Number(property('Fontsize')) || 36) / 2.7)) + 'px'
+      // 样例块只有 64 像素宽，字号上限压到 16 像素，避免大字号样式把文字裁掉。
+      text.style.fontSize = Math.max(9, Math.min(16, (Number(property('Fontsize')) || 36) / 2.9)) + 'px'
       text.style.color = cssAssColor(property('PrimaryColour'))
       text.style.webkitTextStroke = Math.min(2, Math.max(0, Number(property('Outline')) || 0) / 3) + 'px ' + cssAssColor(property('OutlineColour'))
       text.style.fontWeight = Number(property('Bold')) ? 'bold' : 'normal'
@@ -2448,6 +2449,11 @@ quitDialog.addEventListener('cancel', event => {
   cancelClosing()
 })
 quitDialog.addEventListener('close', () => setQuitDialogBusy(false))
+
+// 访达双击工程文件：和「最近工程」走同一条打开路径，未保存内容仍会先询问。
+app.onOpenPath?.(path => {
+  changeProject(async () => openResult(await app.openProjectPath(path))).catch(error => status(error.message))
+})
 
 app.onCloseRequest(() => {
   if (quitDialog.open || quitDialogBusy) return
