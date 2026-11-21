@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' blob:; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self' 'unsafe-inline'; media-src subx-media:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>SubX</title>
+  <link rel="stylesheet" href="./workspace.css">
+</head>
+<body>
+  <svg class="icon-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-new" viewBox="0 0 24 24"><path d="M5 3.5h9l4.5 4.5v4 M14 3.5v5h4.5 M5 3.5v17h7 M17.5 14v7m-3.5-3.5h7"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 17V6a1.5 1.5 0 0 1 1.5-1.5h5l2.3 2.7h6.7A1.5 1.5 0 0 1 20 8.7v1.8 M3.7 19.5l2.6-9h15l-2.7 9z"/></symbol>
+    <symbol id="i-recent" viewBox="0 0 24 24"><path d="M3.5 10a8.5 8.5 0 1 1 1.3 7.4 M3 4.5v6h6 M12 7v5l3.5 2"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M4 4h13l3 3v13H4z M8 4v6h8V4 M8 20v-6h8v6"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><path d="M9 8h11v12H9z M5 16H3.8V3.8h11.5V5"/></symbol>
+    <symbol id="i-import" viewBox="0 0 24 24"><path d="M4 14v5.5h16V14 M12 3v11m-4-4 4 4 4-4"/></symbol>
+    <symbol id="i-export" viewBox="0 0 24 24"><path d="M4 14v5.5h16V14 M12 15V4m-4 4 4-4 4 4"/></symbol>
+    <symbol id="i-film" viewBox="0 0 24 24"><path d="M3 8h18v12H3z M3 8l-.6-4.2L19.8 1l.7 4.2z M6.7 3.1l2.6 3.7m3.2-4.6 2.6 3.6"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><path d="M3.5 4.5h17v12h-17z M12 16.5v3m-4 1h8"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M3 6h4m6 0h8M3 12h11m6 0h1M3 18h2m6 0h10 M10 3v6m7 0v6M8 15v6"/></symbol>
+    <symbol id="i-style" viewBox="0 0 24 24"><path d="M4 5h16M12 5v15m-4 0h8M4 8V5m16 3V5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14m-7-7v14"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m7 4.5 12 7.5-12 7.5z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5v14m10-14v14"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="m8.5 4.5-5 5 5 5 M4 9.5h9.5a5 5 0 0 1 0 10"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15.5 4.5 5 5-5 5 M20 9.5h-9.5a5 5 0 0 0 0 10"/></symbol>
+    <symbol id="i-track" viewBox="0 0 24 24"><path d="M3 5h18v4H3z M3 14h8m-8 4h6m8-5v7m-3.5-3.5h7"/></symbol>
+    <symbol id="i-cue" viewBox="0 0 24 24"><path d="M20.5 10V5H3.5v14H11M7 10h8m-8 4h4m6.5-1v8m-4-4h8"/></symbol>
+    <symbol id="i-split" viewBox="0 0 24 24"><path d="M3 12h5c4 0 4-6 8-6h5m-4-3 4 3-4 3 M8 12c4 0 4 6 8 6h5m-4-3 4 3-4 3"/></symbol>
+    <symbol id="i-select" viewBox="0 0 24 24"><path d="m5 3 14 10-6.2.6 3.5 6-2.5 1.4-3.4-6L6 19z"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="m10 14 4-4m-4.7-1.3 2.5-2.5a4.3 4.3 0 1 1 6.1 6.1l-2.5 2.5m-.7.5-2.5 2.5a4.3 4.3 0 1 1-6.1-6.1l2.5-2.5"/></symbol>
+    <symbol id="i-snap" viewBox="0 0 24 24"><path d="M4 4h4v8a4 4 0 0 0 8 0V4h4v8a8 8 0 0 1-16 0z M4 8h4m8 0h4"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3 3l18 18 M9.5 5.4A10 10 0 0 1 12 5c6.4 0 10 7 10 7a18 18 0 0 1-3.1 4.1 M6.1 6.9A20 20 0 0 0 2 12s3.6 7 10 7a11 11 0 0 0 4.3-.9"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z M12 11v5m0-8.5v.2"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="m4 16-.5 4.5L8 20 20 8l-4-4z M13.5 6.5l4 4"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m10 6-6 6 6 6 M4 12h16"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 6.5h16M9 6.5V4.5h6v2M6.5 6.5l.9 13h9.2l.9-13M10 10.5v5.5m4-5.5v5.5"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8M6.4 6.5a8 8 0 1 0 11.2 0"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 9.5h.01M9.5 9.5h.01M13 9.5h.01M16.5 9.5h.01M6 12.5h.01M9.5 12.5h.01M13 12.5h.01M16.5 12.5h.01M7.5 15.5h9"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 3.5h6.5V10M20.5 3.5 11 13M18 13.5v6.5H4V6h7"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V7a3.5 3.5 0 0 1 7 0v3.5"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></symbol>
+    <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M4 9h5V4M20 9h-5V4M4 15h5v5M20 15h-5v5"/></symbol>
+    <symbol id="i-razor" viewBox="0 0 24 24"><path d="M14.6 3.2 20.8 9.4 9.3 20.9 3.1 14.7z M11.9 5.9l6.2 6.2 M5.6 12.2l6.2 6.2 M14.2 8.2l1.6 1.6"/></symbol>
+    <symbol id="i-blade" viewBox="0 0 24 24"><path d="M7 4l10 12M17 4L7 16"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></symbol>
+    <symbol id="i-select-forward" viewBox="0 0 24 24"><rect x="3" y="7" width="10" height="10" rx="2"/><path d="M16 5v14M16 12h5m-2.5-2.5L21 12l-2.5 2.5"/></symbol>
+    <symbol id="i-select-backward" viewBox="0 0 24 24"><rect x="11" y="7" width="10" height="10" rx="2"/><path d="M8 5v14M8 12H3m2.5-2.5L3 12l2.5 2.5"/></symbol>
+    <symbol id="i-trim-start" viewBox="0 0 24 24"><path d="M4 5v14M20 12H8m4-4-4 4 4 4"/></symbol>
+    <symbol id="i-trim-end" viewBox="0 0 24 24"><path d="M20 5v14M4 12h12m-4-4 4 4-4 4"/></symbol>
+    <symbol id="i-marker" viewBox="0 0 24 24"><path d="M6 3v18M6 4h11l-3 4 3 4H6"/></symbol>
+    <symbol id="i-remove-track" viewBox="0 0 24 24"><path d="M3 7h12M3 12h12M3 17h12"/><circle cx="18.5" cy="12" r="4"/><path d="M16.5 12h4"/></symbol>
+    <symbol id="i-wave-symmetric" viewBox="0 0 24 24"><path d="M3 12h2.5l2-5 2 10 2-8 2 5 2-3 2 2H21"/></symbol>
+    <symbol id="i-wave-asymmetric" viewBox="0 0 24 24"><path d="M3 18h18M4 18l3-9 3 9M10 18l3-12 3 12M16 18l2-5 2 5"/></symbol>
+    <symbol id="i-wave-off" viewBox="0 0 24 24"><path d="M3 12h2.5l2-5 2 10 2-8 2 5 2-3 2 2H21"/><path d="M4 4l16 16"/></symbol>
+    <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V7a3.5 3.5 0 0 1 6.7-1.4"/></symbol>
+  </svg>
+  <header class="appbar">
+    <span class="brand"><img src="../assets/textLOGO.png" alt="SubX"></span>
+    <nav class="menubar" aria-label="主菜单">
+      <div class="menu">
+        <button class="menu-trigger" id="menu-file" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="menu-file-popup">文件</button>
+        <div class="menu-popup" id="menu-file-popup" role="menu" aria-labelledby="menu-file" hidden>
+          <button type="button" role="menuitem" id="new-project"><svg class="icon" aria-hidden="true"><use href="#i-new"></use></svg><span>新建工程</span><kbd>⌘N</kbd></button>
+          <button type="button" role="menuitem" id="open-project"><svg class="icon" aria-hidden="true"><use href="#i-folder"></use></svg><span>打开工程…</span><kbd>⌘O</kbd></button>
+          <button type="button" role="menuitem" id="recent-projects"><svg class="icon" aria-hidden="true"><use href="#i-recent"></use></svg><span>最近工程…</span></button>
+          <hr>
+          <button type="button" role="menuitem" id="save-project"><svg class="icon" aria-hidden="true"><use href="#i-save"></use></svg><span>保存</span><kbd>⌘S</kbd></button>
+          <button type="button" role="menuitem" id="save-project-as"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg><span>另存为…</span><kbd>⇧⌘S</kbd></button>
+          <hr>
+          <button type="button" role="menuitem" id="menu-open-media"><svg class="icon" aria-hidden="true"><use href="#i-film"></use></svg><span>打开视频…</span></button>
+          <button type="button" role="menuitem" id="import-subtitles"><svg class="icon" aria-hidden="true"><use href="#i-import"></use></svg><span>导入字幕…</span><kbd>⌘I</kbd></button>
+          <hr>
+          <button type="button" role="menuitem" id="menu-quit"><svg class="icon" aria-hidden="true"><use href="#i-power"></use></svg><span>退出 SubX</span><kbd>⌘Q</kbd></button>
+        </div>
+      </div>
+      <div class="menu">
+        <button class="menu-trigger" id="menu-edit" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="menu-edit-popup">编辑</button>
+        <div class="menu-popup" id="menu-edit-popup" role="menu" aria-labelledby="menu-edit" hidden>
+          <button type="button" role="menuitem" id="menu-undo"><svg class="icon" aria-hidden="true"><use href="#i-undo"></use></svg><span>撤销</span><kbd>⌘Z</kbd></button>
+          <button type="button" role="menuitem" id="menu-redo"><svg class="icon" aria-hidden="true"><use href="#i-redo"></use></svg><span>重做</span><kbd>⇧⌘Z</kbd></button>
+          <button type="button" role="menuitem" id="menu-delete-cue"><svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg><span>删除字幕</span><kbd>Delete</kbd></button>
+          <hr>
+          <button type="button" role="menuitem" id="menu-add-cue"><svg class="icon" aria-hidden="true"><use href="#i-cue"></use></svg><span>添加字幕</span></button>
+          <button type="button" role="menuitem" id="menu-add-track"><svg class="icon" aria-hidden="true"><use href="#i-track"></use></svg><span>添加轨道</span></button>
+          <button type="button" role="menuitem" id="menu-delete-track"><svg class="icon" aria-hidden="true"><use href="#i-remove-track"></use></svg><span>删除轨道</span></button>
+          <button type="button" role="menuitem" id="split-track"><svg class="icon" aria-hidden="true"><use href="#i-split"></use></svg><span>拆分双语…</span></button>
+          <button type="button" role="menuitem" id="link-tool" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg><span>链接字幕</span></button>
+          <hr>
+          <button type="button" role="menuitem" id="menu-next-review"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg><span>定位下一条待校对</span></button>
+          <button type="button" role="menuitem" id="menu-complete-review"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg><span>标为已校对</span></button>
+          <hr>
+          <button type="button" role="menuitem" id="menu-styles-tab"><svg class="icon" aria-hidden="true"><use href="#i-style"></use></svg><span>样式管理</span></button>
+          <button type="button" role="menuitem" id="menu-settings-tab"><svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg><span>项目设置</span></button>
+          <button type="button" role="menuitem" id="menu-play"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg><span>播放 / 暂停</span><kbd>Space</kbd></button>
+          <button type="button" role="menuitemradio" aria-checked="true" id="menu-quality-1"><svg class="icon" aria-hidden="true"><use href="#i-monitor"></use></svg><span>完整预览</span><span class="menu-check" aria-hidden="true">✓</span></button>
+          <button type="button" role="menuitemradio" aria-checked="false" id="menu-quality-2"><svg class="icon" aria-hidden="true"><use href="#i-monitor"></use></svg><span>1/2 预览</span><span class="menu-check" aria-hidden="true">✓</span></button>
+          <button type="button" role="menuitemradio" aria-checked="false" id="menu-quality-4"><svg class="icon" aria-hidden="true"><use href="#i-monitor"></use></svg><span>1/4 预览</span><span class="menu-check" aria-hidden="true">✓</span></button>
+        </div>
+      </div>
+      <div class="menu">
+        <button class="menu-trigger" id="menu-export" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="menu-export-popup">导出</button>
+        <div class="menu-popup" id="menu-export-popup" role="menu" aria-labelledby="menu-export" hidden>
+          <button type="button" role="menuitem" id="export-subtitles"><svg class="icon" aria-hidden="true"><use href="#i-export"></use></svg><span>导出字幕…</span><kbd>⌘E</kbd></button>
+          <button type="button" role="menuitem" id="compose-video"><svg class="icon" aria-hidden="true"><use href="#i-film"></use></svg><span>合成视频…</span></button>
+        </div>
+      </div>
+      <div class="menu">
+        <button class="menu-trigger" id="menu-about" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="menu-about-popup">关于</button>
+        <div class="menu-popup" id="menu-about-popup" role="menu" aria-labelledby="menu-about" hidden>
+          <button type="button" role="menuitem" id="about-app"><svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg><span>关于 SubX</span></button>
+          <button type="button" role="menuitem" id="menu-shortcuts"><svg class="icon" aria-hidden="true"><use href="#i-keyboard"></use></svg><span>快捷键一览…</span></button>
+          <button type="button" role="menuitem" id="menu-homepage"><svg class="icon" aria-hidden="true"><use href="#i-external"></use></svg><span>访问项目主页</span></button>
+        </div>
+      </div>
+    </nav>
+  </header>
+  <main class="workspace">
+    <section class="upper" aria-label="预览与配置">
+      <section class="monitor">
+        <header class="panel-heading">
+          <div class="monitor-title"><svg class="icon" aria-hidden="true"><use href="#i-monitor"></use></svg><span id="media-name">视频预览</span></div>
+
+        </header>
+        <div id="monitor-stage" class="monitor-stage">
+          <div id="frame" class="frame">
+            <video id="video" preload="metadata" playsinline></video>
+            <canvas id="preview-canvas" hidden></canvas>
+            <div id="ass-overlays" aria-hidden="true"></div>
+            <div id="captions" class="captions" aria-hidden="true"></div>
+          </div>
+          <div id="empty-video" class="empty-video">
+            <img class="empty-wordmark" src="../assets/textLOGO.png" alt="SubX">
+            <span id="empty-video-message" hidden></span>
+          </div>
+        </div>
+        <div class="preview-progress"><input id="preview-progress" type="range" min="0" max="1000" value="0" step="1" aria-label="视频进度" disabled></div>
+        <div class="monitor-controls">
+          <output id="timecode">00:00:00.000</output>
+          <button id="play" aria-label="播放" title="播放"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg></button>
+          <div class="monitor-controls-end">
+            <button id="fullscreen-preview" title="全屏预览" aria-label="全屏预览视频" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-expand"></use></svg></button>
+            <select id="quality" aria-label="预览画质">
+              <option value="1">完整</option><option value="2">1/2</option><option value="4">1/4</option>
+            </select>
+          </div>
+        </div>
+      </section>
+      <div id="vertical-divider" class="divider vertical" role="separator" tabindex="0" aria-label="调整配置区宽度" aria-orientation="vertical"><span class="divider-handle" aria-hidden="true"></span></div>
+      <aside class="inspector">
+        <header class="tabs" role="tablist">
+          <button id="styles-tab" role="tab" aria-selected="true" aria-controls="styles-panel"><svg class="icon" aria-hidden="true"><use href="#i-style"></use></svg>样式管理</button>
+          <button id="settings-tab" role="tab" aria-selected="false" aria-controls="settings-panel"><svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg>项目设置</button>
+          <button id="cue-tab" role="tab" aria-selected="false" aria-controls="cue-panel" hidden>字幕编辑</button>
+        </header>
+        <section id="styles-panel" class="inspector-body" role="tabpanel" aria-labelledby="styles-tab">
+          <div id="style-list-header" class="inspector-heading">项目样式 <button id="add-style" title="新建样式" aria-label="新建样式"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></button></div>
+          <div id="styles-list" role="list"></div>
+          <div id="style-editor" hidden></div>
+        </section>
+        <section id="settings-panel" class="inspector-body" role="tabpanel" aria-labelledby="settings-tab" hidden>
+          <div class="project-options">
+            <label><input id="project-fade" type="checkbox">字幕渐入渐出</label>
+            <label><input id="project-watermark" type="checkbox">画面水印</label>
+          </div>
+        </section>
+        <section id="cue-panel" class="inspector-body" role="tabpanel" aria-labelledby="cue-tab" hidden>
+          <form id="cue-form">
+            <label>正文<textarea id="cue-text" rows="4"></textarea></label>
+            <div class="columns">
+              <label>开始时间<input id="cue-start" placeholder="00:00:00.000" required></label>
+              <label>结束时间<input id="cue-end" placeholder="00:00:00.000" required></label>
+            </div>
+            <label>样式<select id="cue-style"></select></label>
+            <button id="complete-review" type="button" hidden>标为已校对</button>
+            <div class="dialog-actions"><button id="delete-cue" type="button">删除字幕</button><button class="discard-draft" type="button" hidden>取消修改</button><button type="submit" class="primary">应用修改</button></div>
+          </form>
+          <p id="empty-cue" class="muted">选择时间轴上的字幕以编辑正文和时间。</p>
+
+        </section>
+      </aside>
+    </section>
+    <div id="horizontal-divider" class="divider horizontal" role="separator" tabindex="0" aria-label="调整时间轴高度" aria-orientation="horizontal"><span class="divider-handle" aria-hidden="true"></span></div>
+    <section class="timeline" aria-label="多轨时间轴">
+      <header class="timeline-controls">
+        <div class="timeline-actions" aria-label="时间轴即时操作">
+          <button id="add-cue" title="添加字幕" aria-label="添加字幕"><svg class="icon" aria-hidden="true"><use href="#i-cue"></use></svg></button>
+          <button id="undo" title="撤销" aria-label="撤销"><svg class="icon" aria-hidden="true"><use href="#i-undo"></use></svg></button>
+          <button id="redo" title="重做" aria-label="重做"><svg class="icon" aria-hidden="true"><use href="#i-redo"></use></svg></button>
+          <button id="split-cue" title="分割字幕" aria-label="分割字幕"><svg class="icon" aria-hidden="true"><use href="#i-blade"></use></svg></button>
+          <button id="trim-start" title="向左裁剪" aria-label="向左裁剪"><svg class="icon" aria-hidden="true"><use href="#i-trim-start"></use></svg></button>
+          <button id="trim-end" title="向右裁剪" aria-label="向右裁剪"><svg class="icon" aria-hidden="true"><use href="#i-trim-end"></use></svg></button>
+          <button id="timeline-delete" title="删除字幕" aria-label="删除字幕"><svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg></button>
+          <button id="toggle-marker" title="添加 / 删除标记" aria-label="添加标记"><svg class="icon" aria-hidden="true"><use href="#i-marker"></use></svg></button>
+          <span id="drag-overlap" hidden>同轨字幕重叠</span>
+        </div>
+        <div class="timeline-states" aria-label="时间轴状态切换">
+          <button id="snap-tool" title="自动吸附" aria-label="自动吸附" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-snap"></use></svg></button>
+          <button id="waveform-mode" title="波形：对称" aria-label="波形显示模式"><svg class="icon" aria-hidden="true"><use href="#i-wave-symmetric"></use></svg></button>
+        </div>
+      </header>
+      <div class="timeline-body">
+        <nav class="toolrail" aria-label="光标模式">
+          <button id="select-tool" class="selected" title="选择" aria-label="选择" aria-pressed="true"><svg class="icon" aria-hidden="true"><use href="#i-select"></use></svg></button>
+          <button id="split-tool" title="剃刀" aria-label="剃刀" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-razor"></use></svg></button>
+          <button id="select-forward" title="向前选中" aria-label="向前选中" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-select-forward"></use></svg></button>
+          <button id="select-backward" title="向后选中" aria-label="向后选中" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-select-backward"></use></svg></button>
+        </nav>
+        <div class="tool-stash" hidden><button id="open-media">打开视频</button><button id="delete-track" title="删除轨道" aria-label="删除轨道"><svg class="icon" aria-hidden="true"><use href="#i-remove-track"></use></svg></button><button id="next-review" title="定位下一条待校对字幕"></button></div>
+        <div id="timeline-scroll" class="timeline-scroll">
+          <div id="timeline-content" class="timeline-content">
+            <div class="track-headings" id="track-headings"></div>
+            <div class="track-data" id="track-data">
+              <div id="ruler" class="ruler" tabindex="0" aria-label="时间标尺"></div>
+              <canvas id="waveform" aria-hidden="true"></canvas>
+              <div id="track-lanes"></div>
+              <div id="playhead" class="playhead" aria-hidden="true"></div>
+              <div id="snap-guide" class="snap-guide" aria-hidden="true" hidden></div>
+              <div id="selection-box" class="selection-box" aria-hidden="true" hidden></div>
+            </div>
+          </div>
+          <p id="empty-timeline" class="empty-timeline">添加字幕，或导入 SRT / ASS。</p>
+        </div>
+      </div>
+      <div class="timeline-footer">
+        <div id="timeline-zoom" class="timeline-zoom" role="scrollbar" aria-label="时间轴滚动与缩放" aria-orientation="horizontal" tabindex="0">
+          <div class="zoom-track" aria-hidden="true"></div>
+          <div id="zoom-thumb" class="zoom-thumb">
+            <span class="zoom-grip" data-edge="left" aria-hidden="true"></span>
+            <span class="zoom-grip" data-edge="right" aria-hidden="true"></span>
+          </div>
+        </div>
+        <!-- 底部滚动条驱动缩放；保留 range 作为状态源与自动化回归入口 -->
+        <input id="zoom" class="zoom-source" type="range" min="0" max="320" step="any" value="94" aria-label="时间轴缩放">
+      </div>
+    </section>
+  </main>
+  <footer><span id="status" role="status">就绪</span><span id="project-stats">0 条轨道 · 0 条字幕</span></footer>
+  <div id="timeline-menu" class="menu-popup" role="menu" aria-label="时间轴操作" popover="auto"></div>
+  <div id="cue-editor-popover" class="cue-editor-popover" role="dialog" aria-label="编辑字幕正文" hidden>
+    <textarea id="editor-text" rows="2" placeholder="输入字幕正文…" aria-label="字幕正文"></textarea>
+    <p id="editor-error" class="cue-editor-error" hidden></p>
+    <div class="cue-editor-toolbar">
+      <output id="editor-count" class="cue-editor-count" title="字符数" aria-label="字符数">0</output><span class="cue-editor-unit">字符</span>
+      <span class="cue-editor-spacer"></span>
+      <button id="editor-save" class="cue-editor-action primary" type="button" title="保存正文" aria-label="保存正文"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg></button>
+      <button id="editor-cancel" class="cue-editor-action" type="button" title="取消编辑" aria-label="取消编辑"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+    </div>
+  </div>
+  <dialog id="quit-dialog" class="quit-dialog" aria-labelledby="quit-title" aria-describedby="quit-message">
+    <img class="quit-app-icon" src="subx://app/assets/SubXIcon.png" alt="" draggable="false">
+    <h2 id="quit-title">退出时是否要保存工程</h2>
+    <p id="quit-message">当前工作空间中的内容还未保存。<br><span class="quit-hint">推荐保存工程后再退出。</span></p>
+    <div class="quit-actions">
+      <button id="quit-save" class="primary" type="button">保存项目</button>
+      <button id="quit-discard" type="button">放弃保存</button>
+      <button id="quit-cancel" type="button">取消退出</button>
+    </div>
+  </dialog>
+  <dialog id="split-dialog" aria-labelledby="split-title" aria-describedby="split-summary">
+    <form method="dialog">
+      <h2 id="split-title">拆分双语字幕</h2>
+      <label>语言顺序<select id="split-order"><option value="original">第一行在上轨</option><option value="reverse">第二行在上轨</option></select></label>
+      <p id="split-summary" class="muted"></p>
+      <div id="split-preview"></div>
+      <div class="dialog-actions"><button value="cancel">取消</button><button class="primary" value="confirm">确认拆分</button></div>
+    </form>
+  </dialog>
+  <dialog id="project-change-dialog" aria-labelledby="project-change-title">
+    <form method="dialog">
+      <h2 id="project-change-title">保存当前工程的修改？</h2>
+      <p id="project-change-detail" class="muted" hidden>请先返回编辑区应用字幕修改或保存样式。</p>
+      <div class="dialog-actions">
+        <button value="cancel" autofocus>取消</button>
+        <button value="discard">放弃修改</button>
+        <button class="primary" value="save">保存并继续</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="recent-dialog">
+    <form method="dialog"><h2>最近工程</h2><div id="recent-list"></div><div class="dialog-actions"><button>关闭</button></div></form>
+  </dialog>
+  <dialog id="srt-import-dialog" aria-labelledby="srt-import-title" aria-describedby="srt-import-summary">
+    <form method="dialog">
+      <h2 id="srt-import-title">SRT 导入检查</h2>
+      <p id="srt-import-summary"></p>
+      <ul id="srt-import-issues"></ul>
+      <div class="dialog-actions">
+        <button value="cancel" autofocus>取消</button><button class="primary" value="confirm">仅导入有效字幕</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="about-dialog" aria-labelledby="about-title">
+    <form method="dialog">
+      <span class="about-wordmark" aria-hidden="true">SubX</span>
+      <h2 id="about-title">关于 SubX</h2>
+      <p class="dialog-description">多轨字幕编辑器。编排时间轴、校对双语字幕，并制作带字幕的视频。</p>
+      <div class="about-detail"><span>应用版本</span><output id="about-version"></output></div>
+      <div class="dialog-actions"><button autofocus>关闭</button></div>
+    </form>
+  </dialog>
+  <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
+    <form method="dialog">
+      <h2 id="shortcuts-title">快捷键</h2>
+      <dl class="shortcut-list">
+        <div><dt>播放 / 暂停</dt><dd>Space</dd></div>
+        <div><dt>新建工程</dt><dd>⌘N</dd></div>
+        <div><dt>打开工程</dt><dd>⌘O</dd></div>
+        <div><dt>保存 / 另存为</dt><dd>⌘S / ⇧⌘S</dd></div>
+        <div><dt>导入字幕</dt><dd>⌘I</dd></div>
+        <div><dt>导出字幕</dt><dd>⌘E</dd></div>
+        <div><dt>撤销 / 重做</dt><dd>⌘Z / ⇧⌘Z</dd></div>
+        <div><dt>删除字幕</dt><dd>Delete</dd></div>
+        <div><dt>时间标尺定位</dt><dd>← / →，Shift 加速</dd></div>
+        <div><dt>菜单浏览</dt><dd>方向键，Esc 关闭</dd></div>
+      </dl>
+      <p class="dialog-description">Windows 与 Linux 上把 ⌘ 换成 Ctrl。</p>
+      <div class="dialog-actions"><button autofocus>关闭</button></div>
+    </form>
+  </dialog>
+  <dialog id="export-format" aria-labelledby="export-title">
+    <form method="dialog">
+      <h2 id="export-title">导出字幕</h2>
+      <p class="dialog-description" id="export-track-summary"></p>
+      <div class="format-options">
+        <button value="srt"><strong>SRT</strong><span>时间码与多行正文</span><svg class="icon" aria-hidden="true"><use href="#i-arrow"></use></svg></button>
+        <button value="ass"><strong>ASS</strong><span>保留字幕样式与定位</span><svg class="icon" aria-hidden="true"><use href="#i-arrow"></use></svg></button>
+      </div>
+      <p id="ass-export-note" class="muted" hidden>选择 SRT 会省略 ASS 样式。</p>
+      <div class="dialog-actions"><button value="cancel">取消</button></div>
+    </form>
+  </dialog>
+  <dialog id="composition-dialog" aria-labelledby="composition-heading">
+    <form id="composition-form">
+      <h2 id="composition-heading">合成视频</h2>
+      <div class="composition-source"><strong id="composition-source"></strong><span id="composition-info"></span></div>
+      <fieldset class="composition-options">
+        <div class="composition-section"><h3>字幕</h3>
+          <label>烧录范围<select name="scope"><option value="visible">所有可见轨道</option><option value="active">仅当前轨道</option></select></label>
+          <small id="composition-cues"></small>
+        </div>
+        <div class="composition-section"><h3>视频 <small>MP4</small></h3>
+          <div class="columns">
+            <label>视频编码<select name="codec"><option value="h264">H.264 / AVC</option><option value="hevc">H.265 / HEVC</option></select></label>
+            <label>编码速度<select name="preset"><option value="fast">快速</option><option value="medium" selected>均衡</option><option value="slow">慢速 · 更高压缩率</option></select></label>
+            <label>分辨率<select name="height"><option value="source">与源视频一致</option><option value="720">720p</option><option value="1080">1080p</option><option value="2160">2160p</option></select></label>
+            <label>帧率<select name="fps"><option value="source">与源视频一致</option><option>24</option><option>25</option><option>30</option><option>60</option></select></label>
+          </div>
+          <label>恒定质量 CRF<input name="crf" type="number" min="0" max="51" value="20" required aria-describedby="composition-quality-help"></label>
+          <small id="composition-quality-help">范围 0–51。常用 18–24，数值越低画质越高。</small>
+        </div>
+        <div class="composition-section"><h3>音频</h3>
+          <label>音频编码<select name="audio"><option value="128">AAC · 128 kb/s</option><option value="192" selected>AAC · 192 kb/s</option><option value="320">AAC · 320 kb/s</option><option value="none">移除音频</option></select></label>
+        </div>
+      </fieldset>
+      <span class="muted">使用支持 libass 的本机 FFmpeg，将字幕烧录到画面。</span>
+      <progress id="composition-progress" max="1" hidden aria-label="合成进度"></progress>
+      <div id="composition-message" role="status"></div>
+      <div class="dialog-actions"><button id="composition-cancel" type="button">关闭</button><button class="primary" id="composition-start" type="submit">选择位置并合成</button></div>
+    </form>
+  </dialog>
+  <script src="/libass/subtitles-octopus.js"></script>
+  <script type="module" src="./workspace.mjs"></script>
+</body>
+</html>

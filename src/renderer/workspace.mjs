@@ -1,0 +1,3017 @@
+import { createProject, createTrack, addTopTrack, trackIndex, cueTiming, findCue, inspectTrackSplit, linkedIds, moveDelta, removeCue, splitTrack, trimDelta } from '../core/project.mjs'
+import { alignCue, frameBoundaries, nearestBoundary } from '../core/frame-grid.mjs'
+import { inspectSrt, printTime, readTime, writeSrt } from '../core/srt.mjs'
+import { assStyleResetCues, assTextCues, captureCue, pasteCue, groupAssLayers, importAssLayers, moveCuesToTrack, fallbackAssStyle, field, newStyle, readAss, renameAssStyleReset, setField, writeAss } from '../core/ass.mjs'
+
+import { assLayers, bindComposition } from './composition.mjs'
+import { createAssPreview } from './ass-preview.mjs'
+
+const $ = id => document.getElementById(id)
+const video = $('video')
+const scroll = $('timeline-scroll')
+const zoomBar = $('timeline-zoom')
+const zoomThumb = $('zoom-thumb')
+const canvas = $('preview-canvas')
+const frame = $('frame')
+const stage = $('monitor-stage')
+const monitor = document.querySelector('.monitor')
+const playheadMargin = 8
+const timelineTail = 2000
+const frameTickSpacing = 12
+const app = window.subx
+document.documentElement.classList.toggle('inset-window-controls', app.hasInsetWindowControls)
+const emptyDuration = 10000
+function newWorkspaceProject() {
+  const next = createProject()
+  next.tracks = ['S1', 'S0'].map(name => ({ ...createTrack(name), starter: true }))
+  next.styles = [{ ...newStyle('默认样式'), isProjectDefault: true }]
+  return next
+}
+
+let project = newWorkspaceProject()
+let currentTrack
+let selected
+let selectedCues = new Set()
+let toolMode = 'select'
+let waveformMode = 'symmetric'
+let clipboard
+let selectedStyle
+let linkStart
+let linkMode = false
+let snapping = true
+let time = 0
+let presentedFrameTime = null
+let frameRequest
+let frameGeneration = 0
+let pixelsPerSecond = Number($('zoom').value)
+let drag
+let dragFrame = 0
+let rows = []
+let reviewCues = []
+let mediaDuration = 0
+let frameTimes
+let frameGap = Infinity
+let rulerFrame
+let fitZoom = false
+let waveform
+let waveformMedia
+let projectDocument = null
+let projectBusy = false
+let switchingProject = false
+let projectSavePending = false
+let revision = Symbol()
+let savedVersion = { revision, media: project.media }
+const dirty = () => revision !== savedVersion.revision || project.media !== savedVersion.media
+const cueDrafts = new Map()
+const styleDrafts = new Map()
+const inspectorForms = new WeakMap()
+const hasPendingForm = () => cueDrafts.size > 0 || styleDrafts.size > 0
+const undo = []
+const redo = []
+const width = timeMs => timeMs * pixelsPerSecond / 1000
+const deltaFor = px => Math.round(px * 1000 / pixelsPerSecond)
+// 字幕块视觉高度等于轨道行高（CSS 的 .cue 高度与此保持一致）。
+const CUE_HEIGHT = 32
+const CUE_LANE_GAP = 0
+const CUE_LANE_PADDING = 0
+const trackFor = id => project.tracks.find(track => track.cues.some(cue => cue.id === id))
+const track = () => project.tracks.find(track => track.id === currentTrack)
+const trackLabel = track => 'S' + trackIndex(project.tracks, track)
+const styleFor = id => project.styles.find(style => style.id === id)
+const styleName = style => field(style.fields, 'Name').trim()
+
+function status(message) {
+  $('status').textContent = message
+}
+
+function element(tag, className, value) {
+  const node = document.createElement(tag)
+  if (className) node.className = className
+  if (value !== undefined) node.textContent = value
+  return node
+}
+
+function icon(name) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('class', 'icon')
+  svg.setAttribute('aria-hidden', 'true')
+  const use = document.createElementNS(svg.namespaceURI, 'use')
+  use.setAttribute('href', '#i-' + name)
+  svg.append(use)
+  return svg
+}
+
+const headingAddTrack = element('button', 'heading-add-track')
+headingAddTrack.id = 'add-track'
+headingAddTrack.type = 'button'
+headingAddTrack.title = '添加轨道'
+headingAddTrack.setAttribute('aria-label', '添加轨道')
+headingAddTrack.append(icon('track'))
+document.querySelector('.tool-stash').append(headingAddTrack)
+
+const headingResizer = element('div', 'heading-resizer')
+headingResizer.id = 'heading-resizer'
+headingResizer.tabIndex = 0
+headingResizer.setAttribute('role', 'separator')
+headingResizer.setAttribute('aria-orientation', 'vertical')
+headingResizer.setAttribute('aria-label', '调整轨道信息栏宽度')
+headingResizer.title = '拖动调整轨道信息栏宽度'
+
+function applyHeadingWidth(pixels) {
+  const value = Math.max(96, Math.min(280, Math.round(pixels)))
+  document.documentElement.style.setProperty('--heading-width', value + 'px')
+  try { localStorage.setItem('subx.headingWidth', String(value)) } catch {}
+  renderViewport()
+}
+
+try {
+  const savedHeadingWidth = Number(localStorage.getItem('subx.headingWidth'))
+  if (Number.isFinite(savedHeadingWidth) && savedHeadingWidth >= 96 && savedHeadingWidth <= 280) {
+    document.documentElement.style.setProperty('--heading-width', savedHeadingWidth + 'px')
+  }
+} catch {}
+
+headingResizer.addEventListener('pointerdown', event => {
+  if (event.button !== 0) return
+  event.preventDefault()
+  event.stopPropagation()
+  headingResizer.setPointerCapture(event.pointerId)
+})
+headingResizer.addEventListener('pointermove', event => {
+  if (!headingResizer.hasPointerCapture(event.pointerId)) return
+  applyHeadingWidth(event.clientX - $('track-headings').getBoundingClientRect().left)
+})
+headingResizer.addEventListener('keydown', event => {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+  event.preventDefault()
+  const current = $('track-headings').offsetWidth
+  applyHeadingWidth(current + (event.key === 'ArrowRight' ? 8 : -8))
+})
+headingResizer.addEventListener('click', event => event.stopPropagation())
+
+function action(id, callback) {
+  $(id).addEventListener('click', async () => {
+    try {
+      await callback()
+    } catch (error) {
+      status(error.message.replace(/^Error invoking remote method '[^']+': Error: /, ''))
+    }
+  })
+}
+
+// Use an in-app tooltip for icon-only controls, including disabled buttons.
+const iconTooltip = element('div', 'icon-tooltip')
+iconTooltip.setAttribute('role', 'tooltip')
+iconTooltip.hidden = true
+document.body.append(iconTooltip)
+let tooltipTarget
+let tooltipTimer
+function hideIconTooltip() {
+  clearTimeout(tooltipTimer)
+  tooltipTarget = undefined
+  iconTooltip.hidden = true
+}
+document.addEventListener('pointermove', event => {
+  const button = event.target.closest?.('button')
+  if (button === tooltipTarget) return
+  hideIconTooltip()
+  if (!button?.querySelector('svg') || button.textContent.trim()) return
+  const label = button.getAttribute('title') || button.dataset.tooltip || button.getAttribute('aria-label')
+  if (!label) return
+  button.dataset.tooltip = label
+  button.removeAttribute('title')
+  tooltipTarget = button
+  tooltipTimer = setTimeout(() => {
+    if (!button.isConnected || tooltipTarget !== button) return
+    iconTooltip.textContent = button.getAttribute('title') || button.dataset.tooltip
+    ;(button.closest('dialog[open]') || document.body).append(iconTooltip)
+    iconTooltip.hidden = false
+    const box = button.getBoundingClientRect()
+    const tip = iconTooltip.getBoundingClientRect()
+    iconTooltip.style.left = Math.max(4, Math.min(innerWidth - tip.width - 4, box.left + (box.width - tip.width) / 2)) + 'px'
+    iconTooltip.style.top = (box.bottom + tip.height + 6 <= innerHeight ? box.bottom + 6 : Math.max(4, box.top - tip.height - 6)) + 'px'
+  }, 450)
+}, true)
+document.addEventListener('pointerdown', hideIconTooltip, true)
+document.addEventListener('scroll', hideIconTooltip, true)
+window.addEventListener('blur', hideIconTooltip)
+
+const menuTriggers = [...document.querySelectorAll('.menu-trigger')]
+const menuPopups = new Map(menuTriggers.map(trigger => [trigger, $(trigger.getAttribute('aria-controls'))]))
+let openMenuTrigger
+
+function menuItems(trigger) {
+  return [...menuPopups.get(trigger).querySelectorAll('button:not(:disabled)')]
+}
+
+function closeMenus(focus = false) {
+  if (!openMenuTrigger) return
+  const trigger = openMenuTrigger
+  menuPopups.get(trigger).hidden = true
+  trigger.setAttribute('aria-expanded', 'false')
+  openMenuTrigger = undefined
+  if (focus) trigger.focus({ preventScroll: true })
+}
+
+function openMenus(trigger, index = 0) {
+  if (openMenuTrigger && openMenuTrigger !== trigger) closeMenus()
+  syncMenuState()
+  openMenuTrigger = trigger
+  menuPopups.get(trigger).hidden = false
+  trigger.setAttribute('aria-expanded', 'true')
+  const items = menuItems(trigger)
+  items[Math.min(index, items.length - 1)]?.focus({ preventScroll: true })
+}
+
+function syncMenuState() {
+  const current = track()
+  const cue = findCue(project, selected)
+  $('menu-open-media').disabled = $('open-media').disabled
+  $('menu-undo').disabled = !undo.length
+  $('menu-redo').disabled = !redo.length
+  $('menu-delete-cue').disabled = !cue || Boolean(trackFor(cue.id)?.locked)
+  $('split-track').disabled = !current?.cues.length || Boolean(current?.ass) || Boolean(current?.locked)
+  $('menu-delete-track').disabled = !current || Boolean(current?.locked)
+  $('menu-add-cue').disabled = Boolean(current?.locked)
+  $('menu-next-review').disabled = !reviewCues.length
+  $('menu-complete-review').disabled = !cue?.splitNeedsReview
+  $('menu-play').disabled = $('play').disabled
+  const quality = $('quality').value
+  for (const value of ['1', '2', '4']) $('menu-quality-' + value).setAttribute('aria-checked', String(value === quality))
+}
+
+// The native menu uses the same commands and state as the in-window menu.
+if (app.hasInsetWindowControls) {
+  let previousMenu = ''
+  const updateNativeMenu = () => {
+    syncMenuState()
+    const blocked = switchingProject || Boolean(document.querySelector('dialog[open]'))
+    const groups = menuTriggers.map(trigger => ({
+      label: trigger.textContent.trim(),
+      items: [...menuPopups.get(trigger).children].map(node => {
+        if (node.tagName === 'HR') return { separator: true }
+        const checked = node.getAttribute('aria-checked')
+        return { id: node.id, label: node.querySelector('span')?.textContent || node.textContent.trim(),
+          enabled: !blocked && !node.disabled, accelerator: node.querySelector('kbd')?.textContent.trim(),
+          ...(checked === null ? {} : { checked: checked === 'true' }) }
+      }),
+    }))
+    const snapshot = JSON.stringify(groups)
+    if (snapshot !== previousMenu) { previousMenu = snapshot; app.updateMenu(groups) }
+  }
+  app.onMenuCommand(id => {
+    if (switchingProject || document.querySelector('dialog[open]')) return
+    syncMenuState()
+    const button = document.getElementById(id)
+    if (button && button.closest('.menu-popup') && !button.disabled) button.click()
+  })
+  setInterval(updateNativeMenu, 500)
+  updateNativeMenu()
+}
+
+for (const [index, trigger] of menuTriggers.entries()) {
+  const popup = menuPopups.get(trigger)
+  const openAt = offset => {
+    openMenus(trigger, offset)
+  }
+  const step = event => menuTriggers[(index + (event.key === 'ArrowRight' ? 1 : menuTriggers.length - 1)) % menuTriggers.length]
+  trigger.addEventListener('click', () => openMenuTrigger === trigger ? closeMenus() : openAt(0))
+  trigger.addEventListener('pointerenter', () => {
+    if (openMenuTrigger && openMenuTrigger !== trigger) openAt(0)
+  })
+  trigger.addEventListener('keydown', event => {
+    if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      openAt(0)
+    } else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      event.preventDefault()
+      const next = step(event)
+      if (openMenuTrigger) openMenus(next)
+      else next.focus({ preventScroll: true })
+    }
+  })
+  popup.addEventListener('keydown', event => {
+    const items = menuItems(trigger)
+    const current = items.indexOf(document.activeElement)
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeMenus(true)
+    } else if (event.key === 'Tab') {
+      closeMenus()
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const offset = event.key === 'ArrowDown' ? 1 : -1
+      items[(current + offset + items.length) % items.length]?.focus({ preventScroll: true })
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      ;(event.key === 'Home' ? items[0] : items[items.length - 1])?.focus({ preventScroll: true })
+    } else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      event.preventDefault()
+      openMenus(step(event))
+    }
+  })
+  popup.addEventListener('click', event => {
+    if (event.target.closest('button')) closeMenus()
+  })
+}
+
+document.addEventListener('pointerdown', event => {
+  if (openMenuTrigger && !event.target.closest('.menu')) closeMenus()
+}, true)
+window.addEventListener('blur', () => closeMenus())
+
+action('menu-open-media', () => $('open-media').click())
+action('menu-undo', () => $('undo').click())
+action('menu-redo', () => $('redo').click())
+action('menu-delete-cue', () => deleteSelectedCue())
+action('menu-add-cue', () => $('add-cue').click())
+action('menu-add-track', () => $('add-track').click())
+action('menu-next-review', () => $('next-review').click())
+action('menu-complete-review', () => $('complete-review').click())
+action('menu-play', () => $('play').click())
+action('menu-styles-tab', () => $('styles-tab').click())
+action('menu-settings-tab', () => $('settings-tab').click())
+action('menu-quit', () => app.quit())
+action('menu-shortcuts', () => $('shortcuts-dialog').showModal())
+action('menu-homepage', () => app.openExternal('https://github.com/AchiDilyar/SubX'))
+for (const value of ['1', '2', '4']) {
+  action('menu-quality-' + value, () => {
+    const quality = $('quality')
+    quality.value = value
+    quality.dispatchEvent(new Event('change'))
+  })
+}
+
+function edit(change) {
+  const before = { project: structuredClone(project), revision }
+  change()
+  undo.push(before)
+  if (undo.length > 70) undo.shift()
+  redo.length = 0
+  revision = Symbol()
+  render()
+}
+
+function restore(source, destination) {
+  endDrag(drag?.pointer, false)
+  if (!source.length) return
+  destination.push({ project, revision })
+  const media = project.media
+  const entry = source.pop()
+  project = entry.project
+  revision = entry.revision
+  // Video selection is independent of subtitle undo and redo.
+  project.media = media
+  ensureSelection()
+  render()
+}
+
+function ensureSelection() {
+  const owner = trackFor(selected)
+  if (owner) currentTrack = owner.id
+  else selected = undefined
+  if (!track()) currentTrack = project.tracks[0]?.id
+  for (const id of selectedCues) if (!findCue(project, id)) selectedCues.delete(id)
+  if (!styleFor(selectedStyle)) selectedStyle = undefined
+  for (const id of cueDrafts.keys()) if (!findCue(project, id)) cueDrafts.delete(id)
+  for (const id of styleDrafts.keys()) if (!styleFor(id)) styleDrafts.delete(id)
+  linkStart = undefined
+}
+
+function reset(next, media, documentHandle = null) {
+  projectDocument = documentHandle
+  cueDrafts.clear()
+  styleDrafts.clear()
+  project = { styles: [], ...next }
+  selected = undefined
+  selectedCues.clear()
+  currentTrack = undefined
+  selectedStyle = undefined
+  revision = Symbol()
+  savedVersion = { revision, media: project.media }
+  undo.length = 0
+  redo.length = 0
+  ensureSelection()
+  $('cue-tab').hidden = true
+  switchTab('styles', false)
+  scroll.scrollTop = scroll.scrollLeft = 0
+  attachVideo(media)
+  render()
+}
+
+function openResult(result) {
+  if (!result) return
+  reset(result.project, result.media, result.document)
+  status(result.project.media && !result.media ? '原视频不可用，请重新定位视频。' : '已打开工程')
+}
+
+function attachVideo(reference) {
+  frameTimes = rulerFrame = undefined
+  frameGap = Infinity
+  $('ruler').dataset.frameIndex = reference ? 'loading' : 'none'
+  $('ruler').title = ''
+  waveform = undefined
+  delete $('waveform').dataset.hasAudio
+  waveformMedia = reference
+  if (!reference) void app.cancelWaveform()
+
+  const missingPath = reference ? null : project.media
+  const originalName = missingPath?.split(/[\\/]/).pop()
+  $('media-name').textContent = reference?.name || originalName || '视频预览'
+  $('media-name').title = reference?.name ?? missingPath ?? ''
+  $('empty-video-message').textContent = missingPath ? '原视频不可用' : ''
+  $('empty-video-message').hidden = !missingPath
+  $('open-media').textContent = missingPath ? '重新定位视频' : '打开视频'
+  $('play').disabled = true
+  video.pause()
+  video.hidden = true
+  canvas.hidden = true
+  $('empty-video').hidden = false
+  video.removeAttribute('src')
+  if (reference) video.src = reference.url
+  video.load()
+  time = 0
+  presentedFrameTime = null
+  mediaDuration = 0
+  observeVideoFrames()
+  fitPicture()
+  updatePreview()
+}
+
+function fitPicture() {
+  const ar = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9
+  const availableWidth = stage.clientWidth
+  const boxWidth = Math.min(availableWidth, stage.clientHeight * ar)
+  frame.style.width = boxWidth + 'px'
+  frame.style.height = boxWidth / ar + 'px'
+  updatePreview()
+}
+
+function applyQuality() {
+  const scale = Number($('quality').value)
+  const hasFrame = video.readyState >= 2
+  const reduced = scale > 1 && hasFrame
+  video.hidden = !hasFrame || reduced
+  canvas.hidden = !reduced
+  if (reduced) {
+    const w = Math.max(1, Math.round(video.videoWidth / scale))
+    const h = Math.max(1, Math.round(video.videoHeight / scale))
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w
+      canvas.height = h
+    }
+    canvas.getContext('2d', { alpha: false }).drawImage(video, 0, 0, w, h)
+  }
+}
+
+const assPreview = createAssPreview($('ass-overlays'), status, updatePreview)
+let previewStyles = project.styles
+let readStylePreview
+let previewDraftKey = ''
+let previewCueText
+let cuePreviewFrame = 0
+let lastCaptionKey = ''
+function playheadPosition() {
+  if (rulerFrame !== undefined) return rulerFrame
+  if (!frameTimes?.length) return time
+  return frameTimes[Math.max(0, frameAt(time + .51) - 1)]
+}
+
+function updatePlayhead() {
+  $('playhead').style.left = width(playheadPosition()) + 'px'
+  renderPlayingCue()
+}
+
+function renderPlayingCue() {
+  const position = playheadPosition()
+  for (const row of rows) {
+    for (const block of row.buttons.values()) {
+      const start = Number(block.dataset.start)
+      const end = Number(block.dataset.end)
+      block.classList.toggle('playing', Number.isFinite(start) && position >= start && position < end)
+    }
+  }
+}
+function updatePreview() {
+  const captionTime = presentedFrameTime ?? time
+  assPreview.draw(captionTime, drag)
+  $('timecode').value = printTime(Math.max(0, time), '.')
+  const progress = $('preview-progress')
+  progress.disabled = !video.readyState || !mediaDuration
+  progress.value = mediaDuration ? String(Math.max(0, Math.min(1000, time * 1000 / mediaDuration))) : '0'
+  updatePlayhead()
+  if (!video.paused) revealTimelinePosition(playheadPosition())
+  const captions = []
+  for (const row of rows) {
+    if (!row.track.visible || assPreview.ready(row.track.ass ? row.track.id : 'plain-subtitles')) continue
+    for (const cue of row.ordered) {
+      if (cue.start > captionTime + (drag ? Math.abs(drag.delta) : 0)) break
+      const { start, end } = cueTiming(cue, drag)
+      if (start <= captionTime && end > captionTime) {
+        const style = previewStyles.find(style => style.id === cue.style) ??
+          (row.track.ass ? fallbackAssStyle(row.track, cue, previewStyles) : previewStyles.find(style => style.isProjectDefault))
+        const text = previewCueText?.id === cue.id ? previewCueText.text : cue.text
+        if (text) captions.push({ text, style, source: row.track.ass })
+      }
+    }
+  }
+  const key = JSON.stringify([frame.clientHeight, captions.map(({ text, style, source }) => [
+    text, style?.fields, source?.resolution,
+  ])])
+  if (key === lastCaptionKey) return
+  lastCaptionKey = key
+  const aligned = new Map()
+  const nodes = captions.map(({ text, style, source }) => {
+    const scale = frame.clientHeight / (source?.resolution.height ?? 1080)
+    const property = name => style && field(style.fields, name)
+    const assText = source ? text.replace(/\{[^}]*\}/g, '').replace(/\\h/g, ' ').replace(/\\n/g, ' ') : text
+    const node = element('div', 'caption', assText)
+    const alignment = Number(property('Alignment')) || 2
+    const column = (alignment - 1) % 3
+    const group = Math.floor((alignment - 1) / 3)
+    const row = aligned.get(alignment) ?? 0
+    aligned.set(alignment, row + 1)
+    const size = style ? Math.max(9, (Number(property('Fontsize')) || 42) * scale) : Math.max(12, frame.clientHeight * 0.056)
+    node.style.fontSize = size + 'px'
+    node.style.textAlign = ['left', 'center', 'right'][column] ?? 'center'
+    if (group === 2) node.style.top = 'calc(5% + ' + row * size * 1.24 + 'px)'
+    else if (group === 1) node.style.top = 'calc(50% + ' + row * size * 1.24 + 'px)'
+    else node.style.bottom = (style ? Math.max(0, Number(property('MarginV')) * scale) : frame.clientHeight * 0.055) + row * size * 1.24 + 'px'
+    if (style) {
+      node.style.fontFamily = property('Fontname')
+      node.style.color = cssAssColor(property('PrimaryColour'))
+      node.style.webkitTextStroke = Math.max(0, Number(property('Outline')) || 0) * scale + 'px ' + cssAssColor(property('OutlineColour'))
+      const shadow = Math.max(0, Number(property('Shadow')) || 0) * scale
+      node.style.textShadow = shadow ? `${shadow}px ${shadow}px ${cssAssColor(property('BackColour'))}` : 'none'
+      node.style.paddingLeft = Math.max(0, Number(property('MarginL')) || 0) * scale + 'px'
+      node.style.paddingRight = Math.max(0, Number(property('MarginR')) || 0) * scale + 'px'
+      node.style.fontWeight = Number(property('Bold')) ? 'bold' : 'normal'
+      node.style.fontStyle = Number(property('Italic')) ? 'italic' : 'normal'
+    }
+    return node
+  })
+  $('captions').replaceChildren(...nodes)
+}
+
+function readAssColor(value = '') {
+  const source = value.trim()
+  const match = /^(?:&H|0x)([+-]?[0-9a-f]{1,8})&?$/i.exec(source)
+  let packed = 0xffffff
+  if (match) packed = Number.parseInt(match[1], 16) >>> 0
+  else if (/^[+-]?\d{1,10}$/.test(source)) {
+    const decimal = Number(source)
+    if (decimal >= -0x80000000 && decimal <= 0xffffffff) packed = decimal >>> 0
+  }
+  const red = packed & 255
+  const green = (packed >>> 8) & 255
+  const blue = (packed >>> 16) & 255
+  const hex = '#' + [red, green, blue].map(channel => channel.toString(16).padStart(2, '0')).join('')
+  return { hex, alpha: packed >>> 24 }
+}
+
+function cssAssColor(value) {
+  const { hex, alpha } = readAssColor(value)
+  return hex + (255 - alpha).toString(16).padStart(2, '0')
+}
+
+function seek(value, onFrame = false) {
+  const target = Math.max(0, Math.min(video.readyState ? mediaDuration : timelineEnd(), value))
+  rulerFrame = onFrame ? target : undefined
+  time = Math.round(target)
+  presentedFrameTime = null
+  if (video.readyState) video.currentTime = target / 1000
+  updatePreview()
+}
+
+// First presentation timestamp at or after the requested position.
+function frameAt(milliseconds) {
+  let left = 0
+  let right = frameTimes.length
+  while (left < right) {
+    const mid = Math.floor((left + right) / 2)
+    if (frameTimes[mid] < milliseconds) left = mid + 1
+    else right = mid
+  }
+  return left
+}
+function editingBoundaries() {
+  return frameBoundaries(frameTimes, mediaDuration)
+}
+
+function seekFrame(milliseconds, direction = 0) {
+  if (!frameTimes?.length) {
+    seek(milliseconds + direction * 100)
+    return
+  }
+  const index = frameAt(milliseconds)
+  let target = Math.min(index, frameTimes.length - 1)
+  const tolerance = .0001
+  if (direction < 0) target = frameAt(milliseconds - tolerance) - 1
+  else if (direction > 0) target = frameAt(milliseconds + tolerance)
+  else if (target > 0 && milliseconds - frameTimes[target - 1] <= frameTimes[target] - milliseconds) target--
+  seek(frameTimes[Math.max(0, Math.min(target, frameTimes.length - 1))], true)
+}
+
+function timelineEnd() {
+  return Math.max(mediaDuration || emptyDuration, ...rows.map(row => row.end))
+}
+
+function drawWaveform(usable) {
+  const canvas = $('waveform')
+  if (waveformMode === 'off') {
+    canvas.hidden = true
+    return
+  }
+  canvas.hidden = false
+  const height = canvas.clientHeight
+  const offset = scroll.scrollLeft
+  const ratio = devicePixelRatio
+  const visibleWidth = Math.max(0, Math.min(usable, width(timelineEnd()) - offset))
+  canvas.style.left = offset + 'px'
+  canvas.style.width = visibleWidth + 'px'
+  const pixelWidth = Math.round(visibleWidth * ratio)
+  const pixelHeight = Math.round(height * ratio)
+  if (canvas.width !== pixelWidth) canvas.width = pixelWidth
+  if (canvas.height !== pixelHeight) canvas.height = pixelHeight
+  if (!pixelWidth || !pixelHeight) return
+  const context = canvas.getContext('2d')
+  context.setTransform(ratio, 0, 0, ratio, 0, 0)
+  context.clearRect(0, 0, visibleWidth, height)
+  const axis = height / 2
+  const singleSided = waveformMode === 'asymmetric'
+  context.fillStyle = '#393e47'
+  if (singleSided) context.fillRect(0, height - 1, visibleWidth, 1)
+  else context.fillRect(0, axis - .5, visibleWidth, 1)
+  if (!waveform) return
+  const { peaks, step } = waveform
+  context.fillStyle = '#556474'
+  for (let x = 0; x < visibleWidth; x += 2) {
+    const at = (offset + x) * 1000 / pixelsPerSecond / step
+    if (at >= peaks.length) break
+    const end = Math.min(peaks.length, Math.ceil(at + 2000 / pixelsPerSecond / step))
+    let peak = 0
+    for (let index = Math.floor(at); index < end; index++) peak = Math.max(peak, peaks[index])
+    if (singleSided) {
+      const amplitude = peak * Math.max(0, height - 8)
+      if (amplitude > .5) context.fillRect(x, height - amplitude, 1, amplitude)
+    } else {
+      const amplitude = peak * Math.max(0, axis - 6)
+      if (amplitude > .5) context.fillRect(x, axis - amplitude, 1, amplitude * 2)
+    }
+  }
+}
+
+function laneLayout(track) {
+  const ordered = [...track.cues].sort((left, right) => left.start - right.start || left.end - right.end)
+  const laneEnds = []
+  const laneById = new Map()
+  let end = 0
+  for (const cue of ordered) {
+    const free = laneEnds.findIndex(limit => limit <= cue.start)
+    const lane = free < 0 ? laneEnds.length : free
+    laneEnds[lane] = cue.end
+    laneById.set(cue.id, lane)
+    end = Math.max(end, cue.end)
+  }
+  const height = Math.max(CUE_HEIGHT, laneEnds.length * (CUE_HEIGHT + CUE_LANE_GAP))
+  return { track, ordered, laneById, end, height }
+}
+
+function render() {
+  rows = project.tracks.map(laneLayout)
+  if (!video.readyState) time = Math.min(time, timelineEnd())
+  reviewCues = []
+  for (const [rowIndex, row] of rows.entries()) {
+    for (const [cueIndex, cue] of row.ordered.entries()) {
+      if (cue.splitNeedsReview) reviewCues.push({ row, cue, rowIndex, cueIndex })
+    }
+  }
+  $('next-review').hidden = !reviewCues.length
+  $('next-review').textContent = '待校对 ' + reviewCues.length
+  const spacer = element('div', 'heading-spacer')
+  const headingActions = element('div', 'heading-actions')
+  headingActions.append(headingAddTrack, $('delete-track'))
+  spacer.append(element('span', '', '轨道'), headingActions)
+  const headings = element('div', 'track-heading-list')
+  const lanes = []
+  for (const row of rows) {
+    const { track } = row
+    const locked = Boolean(track.locked)
+    const heading = element('div', 'track-heading')
+    heading.dataset.trackId = track.id
+    heading.style.setProperty('--track-height', row.height + 'px')
+    heading.classList.toggle('locked', locked)
+    const label = trackLabel(track)
+    const name = element('span', 'track-name', label)
+    name.tabIndex = 0
+    name.setAttribute('role', 'button')
+    name.title = track.ass?.sourceName ?? track.name
+    name.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      event.preventDefault()
+      chooseTrack(track)
+    })
+    const visibility = element('button', 'visibility-button')
+    visibility.append(icon(track.visible ? 'eye' : 'eye-off'))
+    visibility.title = track.visible ? '隐藏轨道' : '显示轨道'
+    visibility.setAttribute('aria-label', visibility.title + ' ' + label)
+    visibility.addEventListener('click', () => edit(() => { track.visible = !track.visible }))
+    const lock = element('button', 'lock-button')
+    lock.append(icon(locked ? 'lock' : 'unlock'))
+    lock.title = locked ? '解锁轨道' : '锁定轨道'
+    lock.setAttribute('aria-label', lock.title)
+    lock.setAttribute('aria-pressed', String(locked))
+    lock.addEventListener('click', () => toggleTrackLock(track))
+    heading.append(name, visibility, lock)
+    heading.addEventListener('click', event => {
+      if (event.target.closest('button')) return
+      chooseTrack(track)
+    })
+    headings.append(heading)
+    const lane = element('div', 'track-lane' + (track.visible ? '' : ' muted-track') + (locked ? ' locked-track' : ''))
+    lane.dataset.trackId = track.id
+    lane.dataset.layerIndex = String(trackIndex(project.tracks, track))
+    lane.style.setProperty('--track-height', row.height + 'px')
+    lanes.push(lane)
+    row.lane = lane
+    row.buttons = new Map()
+  }
+  $('track-headings').replaceChildren(spacer, headings, headingResizer)
+  $('track-lanes').replaceChildren(...lanes)
+  $('empty-timeline').hidden = rows.length > 0
+  $('project-stats').textContent = rows.length + ' 条轨道 · ' +
+    rows.reduce((sum, row) => sum + row.ordered.length, 0) + ' 条字幕'
+  $('undo').disabled = !undo.length
+  $('redo').disabled = !redo.length
+  refreshTrackControls()
+  renderCueForm()
+  updateProjectTitle()
+  renderViewport()
+  renderStyleList(true)
+  for (const key of ['fade', 'watermark']) $('project-' + key).checked = Boolean(project.settings?.[key])
+}
+
+function refreshTrackControls() {
+  const current = track()
+  const locked = Boolean(current?.locked)
+  $('split-track').disabled = !current?.cues.length || Boolean(current?.ass) || locked
+  $('export-subtitles').disabled = locked || (!current?.ass && !current?.cues.length)
+  $('add-cue').disabled = locked
+  const selectedCue = findCue(project, selected)
+  const selectedLocked = Boolean(selectedCue && trackFor(selectedCue.id)?.locked)
+  $('split-cue').disabled = !selectedCue || selectedLocked
+  $('trim-start').disabled = !selectedCue || selectedLocked
+  $('trim-end').disabled = !selectedCue || selectedLocked
+  $('timeline-delete').disabled = !(selectedCue || selectedCues.size)
+  $('delete-track').disabled = !current || locked
+  for (const heading of $('track-headings').querySelectorAll('.track-heading')) {
+    const active = heading.dataset.trackId === currentTrack
+    heading.classList.toggle('active', active)
+    heading.querySelector('.track-name').setAttribute('aria-pressed', String(active))
+  }
+}
+
+function timelineView() {
+  const headingWidth = $('track-headings').offsetWidth
+  const usable = Math.max(1, scroll.clientWidth - headingWidth)
+  const contentWidth = Math.max(usable, width(contentTime()))
+  return { usable, contentWidth, maxScroll: Math.max(0, contentWidth - usable) }
+}
+
+function renderRuler(start, end, limit, trackData) {
+  const interval = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, 60000, 300000, 900000]
+    .find(step => width(step) >= 95) ?? 3600000
+  trackData.style.setProperty('--tick-size', width(interval) + 'px')
+  const framesVisible = frameTimes?.length
+  const ticks = []
+  const markedEnds = mediaDuration && mediaDuration < limit ? [mediaDuration, limit] : [limit]
+  const nearEndLabel = at => markedEnds.some(end => Math.abs(width(end - at)) < 95)
+  function tick(at, title, extraClass = '') {
+    const mark = element('div', 'tick' + extraClass)
+    mark.style.left = width(at) + 'px'
+    if (title) mark.append(element('span', 'tick-label', title))
+    ticks.push(mark)
+  }
+  if (framesVisible) {
+    let previousLabel = -Infinity
+    let previousTick = -Infinity
+    for (let index = frameAt(start); index < frameTimes.length && frameTimes[index] <= end; index++) {
+      const at = frameTimes[index]
+      if (width(at) - previousTick < frameTickSpacing - .001) continue
+      previousTick = width(at)
+      const showLabel = width(at) - previousLabel >= 105 && !nearEndLabel(at)
+      if (showLabel) previousLabel = width(at)
+      tick(at, showLabel ? printTime(Math.round(at), '.') : '', ' frame-tick')
+    }
+  } else {
+    const minor = interval / 5
+    for (let at = Math.floor(start / minor) * minor; at < limit && at <= end; at += minor) {
+      const major = at % interval === 0
+      const printLabel = major && (at === 0 || !nearEndLabel(at))
+      tick(at, printLabel ? printTime(at, '.').slice(0, interval < 1000 ? 12 : 8) : '', major ? ' major-tick' : '')
+    }
+  }
+  for (const at of markedEnds) {
+    if (end >= at && start <= at) tick(at, printTime(at, '.').slice(0, at % 1000 ? 12 : 8), ' major-tick end-tick')
+  }
+  for (const at of project.markers ?? []) {
+    if (at < start || at > end) continue
+    const marker = element('span', 'marker')
+    marker.style.left = width(at) + 'px'
+    marker.title = '标记 ' + printTime(at, '.')
+    ticks.push(marker)
+  }
+  $('ruler').replaceChildren(...ticks)
+}
+
+function renderViewport() {
+  const { usable } = timelineView()
+  const { min, max } = zoomBounds(usable)
+  if (pixelsPerSecond <= min + .001) fitZoom = true
+  pixelsPerSecond = fitZoom ? min : Math.min(max, pixelsPerSecond)
+  const zoom = $('zoom')
+  zoom.min = String(min)
+  zoom.max = String(max)
+  zoom.value = String(pixelsPerSecond)
+  updatePlayhead()
+  const { contentWidth } = timelineView()
+  const trackData = $('track-data')
+  trackData.style.width = contentWidth + 'px'
+  const timeLimit = timelineEnd()
+  trackData.style.setProperty('--timeline-end', width(timeLimit) + 'px')
+  const guide = $('snap-guide')
+  guide.hidden = drag?.snapTime === undefined
+  if (!guide.hidden) guide.style.left = width(drag.snapTime) + 'px'
+  const visibleStart = deltaFor(Math.max(0, scroll.scrollLeft - 110))
+  const visibleEnd = deltaFor(scroll.scrollLeft + usable + 110)
+  renderRuler(visibleStart, visibleEnd, timeLimit, trackData)
+  drawWaveform(usable)
+  const paired = new Set(selected ? linkedIds(project, selected) : [])
+  const overlaps = dragOverlapIds(drag)
+  $('drag-overlap').hidden = !overlaps?.size
+  for (const row of rows) {
+    row.lane.classList.toggle('active', row.track.id === currentTrack)
+    row.lane.classList.toggle('drop-target', drag?.destination === row)
+    row.lane.classList.toggle('locked-track', Boolean(row.track.locked))
+    const retained = new Set()
+    for (const cue of row.ordered) {
+      if (cue.start > visibleEnd && !drag) break
+      const { start, end } = cueTiming(cue, drag)
+      if (cue.id !== selected && cue.id !== linkStart &&
+          (start > visibleEnd || end < visibleStart)) continue
+      retained.add(cue.id)
+      let block = row.buttons.get(cue.id)
+      if (!block) {
+        block = element('button', 'cue')
+        block.type = 'button'
+        block.dataset.cueId = cue.id
+        block.addEventListener('pointerdown', event => startDrag(event, row.track, cue))
+        block.addEventListener('pointermove', event => {
+          const edge = !linkMode && (drag ? drag.edge : cueEdge(event, cue))
+          block.classList.toggle('trim-edge', Boolean(edge))
+          block.classList.toggle('trim-start', edge === 'start')
+          block.classList.toggle('trim-end', edge === 'end')
+        })
+        block.addEventListener('pointerleave', () => block.classList.remove('trim-edge', 'trim-start', 'trim-end'))
+        block.addEventListener('lostpointercapture', event => endDrag(event.pointerId, false))
+        block.addEventListener('click', event => {
+          if (event.detail === 0) pick(row.track, cue)
+        })
+        block.addEventListener('dblclick', () => openCueEditor(row.track, cue))
+        block.addEventListener('keydown', event => {
+          if (event.key !== 'Enter' || linkMode || event.isComposing || event.keyCode === 229 ||
+              event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+          event.preventDefault()
+          if (!event.repeat) openCueEditor(row.track, cue)
+        })
+        row.buttons.set(cue.id, block)
+        row.lane.append(block)
+      }
+      const displayText = row.track.ass || cue.assText ? cue.text.replace(/\{[^}]*\}/g, '') : cue.text
+      const linked = linkedIds(project, cue.id).length === 2
+      const title = (cue.splitNeedsReview ? '需手工检查 · ' : '') + displayText
+      const label = displayText.replace(/\n/g, ' / ') || '空字幕'
+      if (block.textContent !== label || Boolean(block.firstElementChild) !== linked) {
+        block.replaceChildren(...(linked ? [icon('link'), label] : [label]))
+      }
+      const durationWidth = width(end - start)
+      block.title = title + '\n' + printTime(start, '.') + ' – ' + printTime(end, '.')
+      if (durationWidth < 14) block.title += '\n放大时间轴以拖动边缘，或编辑起止时间。'
+      const isSelected = cue.id === selected || cue.id === linkStart || selectedCues.has(cue.id)
+      block.classList.toggle('selected', isSelected)
+      block.setAttribute('aria-pressed', String(isSelected))
+      block.classList.toggle('paired', paired.has(cue.id) && cue.id !== selected)
+      block.classList.toggle('review', Boolean(cue.splitNeedsReview))
+      block.classList.toggle('locked', Boolean(row.track.locked))
+      block.classList.toggle('drag-overlap', overlaps?.has(cue.id) ?? false)
+      block.style.left = width(start) + 'px'
+      block.style.top = row.laneById.get(cue.id) * (CUE_HEIGHT + CUE_LANE_GAP) + CUE_LANE_PADDING + 'px'
+      block.style.height = CUE_HEIGHT + 'px'
+      const crossing = drag?.destination && drag.movingIds.has(cue.id)
+      block.classList.toggle('crossing-track', Boolean(crossing))
+      block.style.transform = crossing ? 'translateY(' + (drag.destination.lane.offsetTop - row.lane.offsetTop) + 'px)' : ''
+      const trimming = drag?.edge && drag.ids.has(cue.id)
+      block.style.width = Math.max(trimming ? 1 : 14, durationWidth) + 'px'
+      block.dataset.start = String(start)
+      block.dataset.end = String(end)
+    }
+    for (const [id, node] of row.buttons) {
+      if (retained.has(id)) continue
+      node.remove()
+      row.buttons.delete(id)
+    }
+  }
+  renderZoomBar()
+  renderPlayingCue()
+  if (editorOpen()) {
+    if (findCue(project, editorCue)) positionCueEditor()
+    else closeCueEditor(false)
+  }
+}
+
+function chooseTrack(owner) {
+  if (currentTrack === owner.id) return
+  currentTrack = owner.id
+  selectedCues.clear()
+  selected = undefined
+  refreshTrackControls()
+  renderCueForm()
+  renderViewport()
+  refreshInspectorPreview()
+}
+
+function toggleTrackLock(owner) {
+  if (switchingProject) return
+  owner.locked = !owner.locked
+  revision = Symbol()
+  if (owner.locked) {
+    if (selected && trackFor(selected)?.id === owner.id) selected = undefined
+    selectedCues.clear()
+    if (linkStart && trackFor(linkStart)?.id === owner.id) linkStart = undefined
+    if (editorOpen() && trackFor(editorCue)?.id === owner.id) closeCueEditor(false)
+  }
+  render()
+  status((owner.locked ? '已锁定「' : '已解锁「') + trackLabel(owner) + '」')
+}
+
+function pick(track, cue, keepGroup = false) {
+  if (track.locked) {
+    status('轨道已锁定，解锁后可编辑')
+    return
+  }
+  if (!keepGroup) selectedCues.clear()
+  selected = cue.id
+  currentTrack = track.id
+  if (linkMode) {
+    if (linkStart === cue.id || !linkStart && linkedIds(project, cue.id).length > 1) {
+      if (linkedIds(project, cue.id).length > 1) {
+        edit(() => { project.links = project.links.filter(pair => !pair.includes(cue.id)) })
+        status('已解除链接')
+      } else {
+        status('已取消配对')
+      }
+      linkStart = undefined
+    } else if (!linkStart) {
+      linkStart = cue.id
+      status('选择另一条轨道上的字幕以建立链接')
+    } else if (trackFor(linkStart)?.id === track.id) {
+      status('请选择另一条轨道上的字幕')
+    } else if (linkedIds(project, cue.id).length > 1) {
+      status('此字幕已有链接，请先解除链接')
+    } else {
+      edit(() => { project.links.push([linkStart, cue.id]) })
+      linkStart = undefined
+      status('已建立链接')
+    }
+    render()
+    return
+  }
+  refreshTrackControls()
+  renderCueForm()
+  updateProjectTitle()
+  renderViewport()
+  $('cue-tab').hidden = false
+  switchTab('cue')
+  refreshInspectorPreview()
+}
+
+function cueEdge(event, cue) {
+  if (width(cue.end - cue.start) < 14) return null
+  const bounds = event.currentTarget.getBoundingClientRect()
+  const threshold = Math.min(6, bounds.width / 3)
+  if (event.clientX <= bounds.left + threshold) return 'start'
+  if (event.clientX >= bounds.right - threshold) return 'end'
+  return null
+}
+
+function startDrag(event, track, cue) {
+  if (event.button !== 0 || drag) return
+  if (track.locked) {
+    status('轨道已锁定，解锁后可编辑')
+    return
+  }
+  if (toolMode === 'split') {
+    event.preventDefault()
+    splitCueAt(track, cue, cue.start + deltaFor(event.clientX - event.currentTarget.getBoundingClientRect().left))
+    return
+  }
+  if (toolMode === 'select-forward' || toolMode === 'select-backward') {
+    event.preventDefault()
+    selectCueRange(track, cue, toolMode === 'select-forward' ? 'forward' : 'backward')
+    return
+  }
+  const edge = cueEdge(event, cue)
+  const group = !edge && !linkMode && selectedCues.size > 1 && selectedCues.has(cue.id)
+  pick(track, cue, group)
+  if (linkMode) return
+  event.preventDefault()
+  const movingIds = new Set(group ? selectedCues : [cue.id])
+  const ids = new Set(movingIds)
+  if (!edge) {
+    for (const [left, right] of project.links) {
+      if (ids.has(left) || ids.has(right)) { ids.add(left); ids.add(right) }
+    }
+  }
+  const targets = rows.flatMap(row => row.ordered.filter(item => ids.has(item.id)).map(cue => ({ cue, row })))
+  const cues = targets.map(item => item.cue)
+  const overlapRows = new Map(rows.map(row => [row, row.ordered.filter(item => !ids.has(item.id))]))
+  const boundaries = []
+  if (snapping) {
+    for (const row of rows) {
+      if (!row.track.visible) continue
+      for (const other of row.ordered) if (!ids.has(other.id)) boundaries.push(other.start, other.end)
+    }
+  }
+  const limit = edge ? requested => trimDelta(cue, edge, requested) : requested => moveDelta(cues, requested)
+  const snapEdges = edge ? [cue[edge]] : [cue.start, cue.end]
+  drag = { pointer: event.pointerId, startX: event.clientX, scrollLeft: scroll.scrollLeft, startY: event.clientY, source: track, cues, targets, ids, movingIds, edge, grid: editingBoundaries(),
+    boundaries, snapEdges, group, overlapRows, minDelta: limit(-Infinity), maxDelta: limit(Infinity), delta: 0 }
+  event.currentTarget.focus({ preventScroll: true })
+  event.currentTarget.setPointerCapture(event.pointerId)
+}
+
+function findDragSnap(requested) {
+  let closest = Infinity
+  let snap
+  function consider(boundary) {
+    for (const edge of drag.snapEdges) {
+      const delta = boundary - edge
+      const distance = Math.abs(width(delta - requested))
+      if (delta < drag.minDelta || delta > drag.maxDelta || distance > 7 || distance >= closest) continue
+      closest = distance
+      snap = { delta, time: boundary }
+    }
+  }
+  consider(Math.round(playheadPosition()))
+  for (const boundary of drag.boundaries) consider(boundary)
+  return snap
+}
+
+function pointerMove(event) {
+  if (drag?.pointer !== event.pointerId) return
+  const distance = event.clientX - drag.startX + scroll.scrollLeft - drag.scrollLeft
+  const requested = Math.abs(distance) > 3 ? deltaFor(distance) : 0
+  const snap = snapping && requested ? findDragSnap(requested) : undefined
+  const delta = snap?.delta ?? Math.max(drag.minDelta, Math.min(drag.maxDelta, requested))
+  const zone = scroll.getBoundingClientRect()
+  const lane = !drag.edge && (!drag.group || drag.targets.every(target => target.row.track === drag.source)) && Math.abs(event.clientY - drag.startY) > 4 &&
+    event.clientY >= zone.top && event.clientY < zone.bottom &&
+    document.elementsFromPoint(event.clientX, event.clientY).find(node => node.classList.contains('track-lane'))
+  const destination = lane && rows.find(row => row.lane === lane && row.track !== drag.source) || undefined
+  if (delta === drag.delta && snap?.time === drag.snapTime && destination === drag.destination) return
+  drag.destination = destination
+  drag.delta = delta
+  drag.snapTime = snap?.time
+  drag.timings = undefined
+  if (requested && drag.grid.length >= 2) {
+    drag.timings = new Map()
+    for (const cue of drag.cues) {
+      let timing
+      if (drag.edge === 'start') {
+        const start = nearestBoundary(drag.grid, cue.start + delta, -Infinity, cue.end - 1)
+        timing = start === undefined ? { start: cue.start, end: cue.end } : alignCue(drag.grid, start, cue.end)
+      } else if (drag.edge === 'end') {
+        const end = nearestBoundary(drag.grid, cue.end + delta, cue.start + 1)
+        timing = end === undefined ? { start: cue.start, end: cue.end } : alignCue(drag.grid, cue.start, end)
+      } else timing = alignCue(drag.grid, cue.start + delta, cue.end + delta)
+      drag.timings.set(cue.id, timing)
+    }
+    drag.snapTime = undefined
+  }
+  if (!dragFrame) {
+    dragFrame = requestAnimationFrame(() => {
+      dragFrame = 0
+      renderViewport()
+      updatePreview()
+    })
+  }
+}
+
+function dragOverlapIds(adjustment) {
+  if (!adjustment || !adjustment.delta && !adjustment.destination) return
+  const overlaps = new Set()
+  for (const { cue, row } of adjustment.targets) {
+    const { start, end } = cueTiming(cue, adjustment)
+    const zone = adjustment.movingIds.has(cue.id) ? adjustment.destination ?? row : row
+    for (const other of adjustment.overlapRows.get(zone)) {
+      if (other.start >= end) break
+      if (other.end <= start || adjustment.ids.has(other.id)) continue
+      overlaps.add(cue.id)
+      overlaps.add(other.id)
+    }
+  }
+  return overlaps
+}
+
+function endDrag(pointer, commit) {
+  if (!drag || drag.pointer !== pointer) return
+  const adjustment = drag
+  const { delta, cues, edge, source, destination } = adjustment
+  cancelAnimationFrame(dragFrame)
+  dragFrame = 0
+  drag = undefined
+  if (commit && destination && [...adjustment.movingIds].some(id => cueDrafts.has(id))) {
+    renderViewport()
+    updatePreview()
+    status('请先应用或取消字幕草稿，再移动到其他轨道。')
+    return
+  }
+  if (commit && (delta || destination)) {
+    const overlaps = dragOverlapIds(adjustment)
+    edit(() => {
+      for (const cue of cues) Object.assign(cue, cueTiming(cue, adjustment))
+      if (destination) {
+        const moving = cues.filter(cue => adjustment.movingIds.has(cue.id))
+        moveCuesToTrack(project, source, destination.track, moving)
+        currentTrack = destination.track.id
+        selectedCues.clear()
+      }
+    })
+    const message = destination ? '已移动到 ' + trackLabel(destination.track) : edge ? '已调整字幕边界' : '已移动' + (adjustment.group ? '成组字幕' : cues.length > 1 ? '链接字幕' : '字幕')
+    status(message + (overlaps?.size ? ' · 同轨字幕重叠' : ''))
+  } else {
+    renderViewport()
+    updatePreview()
+  }
+}
+
+function switchTab(tab, preview = true) {
+  if ($(tab + '-tab').getAttribute('aria-selected') === 'true') return
+  for (const name of ['styles', 'settings', 'cue']) {
+    $(name + '-tab').setAttribute('aria-selected', String(tab === name))
+    $(name + '-panel').hidden = tab !== name
+  }
+  if (preview) refreshInspectorPreview()
+}
+
+function recordDraft(form) {
+  const binding = inspectorForms.get(form)
+  if (!binding) return
+  const { drafts, id, fields, original } = binding
+  const changes = new Map()
+  fields.forEach((control, index) => {
+    if (control.value !== original[index]) changes.set(index, control.value)
+  })
+  if (changes.size) drafts.set(id, changes)
+  else drafts.delete(id)
+  form.querySelector('.discard-draft').hidden = !changes.size
+}
+
+function bindDraft(form, drafts, id, rerender) {
+  const fields = [...form.querySelectorAll('input,textarea,select')]
+  inspectorForms.set(form, { drafts, id, fields, original: fields.map(control => control.value) })
+  for (const [index, value] of drafts.get(id) ?? []) fields[index].value = value
+  recordDraft(form)
+  form.querySelector('.discard-draft').onclick = () => {
+    drafts.delete(id)
+    rerender()
+    updateProjectTitle()
+  }
+}
+
+function renderCueForm() {
+  inspectorForms.delete($('cue-form'))
+  const cue = findCue(project, selected)
+  $('cue-form').hidden = !cue
+  $('empty-cue').hidden = Boolean(cue)
+  $('complete-review').hidden = !cue?.splitNeedsReview
+  if (!cue) return
+  const locked = Boolean(trackFor(cue.id)?.locked)
+  for (const control of $('cue-form').querySelectorAll('input, textarea, select, button')) control.disabled = locked
+  $('cue-text').value = cue.text
+  $('cue-text').placeholder = trackFor(cue.id)?.ass || cue.assText ? '支持 ASS 覆盖标签' : ''
+  $('cue-start').value = printTime(cue.start, '.')
+  $('cue-end').value = printTime(cue.end, '.')
+  const choices = [new Option('默认', '')]
+  for (const style of project.styles) {
+    if (style.trackId === undefined || style.trackId === trackFor(cue.id)?.id) {
+      choices.push(new Option(styleName(style), style.id))
+    }
+  }
+  $('cue-style').replaceChildren(...choices)
+  $('cue-style').value = cue.style ?? ''
+  bindDraft($('cue-form'), cueDrafts, cue.id, () => {
+    renderCueForm()
+    refreshInspectorPreview()
+  })
+}
+
+const styleSections = [
+  ['字形', [
+    ['Name', '名称', 'text'], ['Fontname', '字体', 'text'],
+    ['Fontsize', '字号', 'number'], ['PrimaryColour', '文字颜色', 'color'],
+  ]],
+  ['描边', [
+    ['Outline', '描边宽度', 'number'], ['OutlineColour', '描边颜色', 'color'],
+  ]],
+  ['位置', [
+    ['Alignment', '对齐', 'alignment'], ['MarginV', '垂直边距', 'number'],
+    ['MarginL', '左边距', 'number'], ['MarginR', '右边距', 'number'],
+  ]],
+]
+
+function styleColorControl(title, previous) {
+  const group = element('div', 'style-color')
+  group.setAttribute('role', 'group')
+  group.setAttribute('aria-label', title)
+  const color = readAssColor(previous)
+  const picker = element('input', 'style-swatch')
+  picker.type = 'color'
+  picker.value = color.hex
+  picker.setAttribute('aria-label', '选择' + title)
+  picker.title = '选择' + title
+
+  const hex = element('input', 'style-hex')
+  hex.type = 'text'
+  hex.required = true
+  hex.maxLength = 7
+  hex.pattern = '#?[0-9a-fA-F]{6}'
+  hex.title = '输入六位十六进制颜色，例如 #FFFFFF'
+  hex.spellcheck = false
+  hex.setAttribute('aria-label', title + '十六进制值')
+  const updateHex = () => { hex.value = picker.value.toUpperCase() }
+  picker.addEventListener('input', updateHex)
+  picker.addEventListener('change', updateHex)
+  hex.addEventListener('input', () => {
+    if (hex.validity.valid) picker.value = '#' + hex.value.replace(/^#/, '')
+  })
+  hex.addEventListener('blur', () => {
+    if (hex.validity.valid) updateHex()
+  })
+  const opacity = element('input', 'style-opacity')
+  opacity.type = 'number'
+  opacity.min = '0'
+  opacity.max = '100'
+  opacity.step = '0.1'
+  opacity.required = true
+  opacity.value = String(Math.round((255 - color.alpha) * 1000 / 255) / 10)
+  opacity.setAttribute('aria-label', title + '不透明度百分比')
+  const opacityLabel = element('label', 'style-opacity-field', '不透明度')
+  opacityLabel.append(opacity, element('span', '', '%'))
+  updateHex()
+  group.append(picker, hex, opacityLabel)
+  return { group, picker }
+}
+
+function styleControl(key, title, type, previous) {
+  if (type === 'color') {
+    const { group, picker } = styleColorControl(title, previous)
+    const wrapper = element('div', 'style-field')
+    wrapper.append(element('span', 'field-label', title), group)
+    return { wrapper, input: picker }
+  }
+  const wrapper = element('label', 'style-field', title)
+  const input = element(type === 'alignment' ? 'select' : 'input')
+  if (type === 'alignment') {
+    const alignments = ['左下', '居中靠下', '右下', '左中', '居中', '右中', '左上', '居中靠上', '右上']
+    input.append(...alignments.map((name, index) => new Option(name, String(index + 1))))
+  } else {
+    input.type = type
+    input.required = true
+    if (type === 'number') {
+      input.min = key === 'Fontsize' ? '1' : '0'
+      input.step = 'any'
+    }
+  }
+  input.value = previous ?? ''
+  wrapper.append(input)
+  return { wrapper, input }
+}
+
+function styleFieldValue(input, previous) {
+  if (input.type !== 'color') return input.value.trim()
+  const opacity = input.parentElement.querySelector('.style-opacity').valueAsNumber
+  const alpha = Math.round((100 - opacity) * 255 / 100)
+  const old = readAssColor(previous)
+  if (input.value === old.hex && alpha === old.alpha) return previous?.trim()
+  const [red, green, blue] = input.value.slice(1).match(/../g)
+  return '&H' + (alpha.toString(16).padStart(2, '0') + blue + green + red).toUpperCase()
+}
+
+function refreshInspectorPreview(projectChanged = false) {
+  const draft = !$('styles-panel').hidden && readStylePreview?.()
+  const key = draft ? JSON.stringify([draft.id, draft.fields]) : ''
+  let nextCueText
+  if (!$('cue-panel').hidden && cueDrafts.has(selected)) {
+    const cue = findCue(project, selected)
+    const text = $('cue-text').value.replace(/\r\n?/g, '\n')
+    if (cue && text !== cue.text) {
+      const track = trackFor(cue.id)
+      nextCueText = { id: cue.id, trackId: track.id, text }
+    }
+  }
+  const styleChanged = key !== previewDraftKey
+  const cueChanged = nextCueText?.id !== previewCueText?.id || nextCueText?.text !== previewCueText?.text
+  if (!projectChanged && !styleChanged && !cueChanged) return
+  previewDraftKey = key
+  previewCueText = nextCueText
+  previewStyles = draft ? project.styles.map(style => style.id === draft.id ? draft : style) : project.styles
+  assPreview.sync(assLayers(project.tracks, previewStyles,
+    project.settings, Math.ceil(mediaDuration / 10) * 10, nextCueText))
+  updatePreview()
+}
+
+function renderStyleList(projectChanged = false) {
+  const styles = project.styles
+  const nameCounts = new Map()
+  for (const style of styles) {
+    const name = styleName(style)
+    nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1)
+  }
+  const style = styleFor(selectedStyle)
+  const list = $('styles-list')
+  const editor = $('style-editor')
+  list.hidden = $('style-list-header').hidden = Boolean(style)
+  editor.hidden = !style
+  editor.replaceChildren()
+  readStylePreview = undefined
+  if (!style) {
+    list.replaceChildren(...styles.map(item => {
+      const name = styleName(item)
+      const row = element('div', 'style-list-item')
+      row.setAttribute('role', 'listitem')
+      const property = key => field(item.fields, key)?.trim()
+      const preview = element('span', 'style-sample')
+      const text = element('span', '', '文本Aa')
+      const alignment = Number(property('Alignment')) || 2
+      preview.style.justifyContent = ['flex-start', 'center', 'flex-end'][(alignment - 1) % 3]
+      preview.style.alignItems = ['flex-end', 'center', 'flex-start'][Math.floor((alignment - 1) / 3)]
+      text.style.fontFamily = property('Fontname') || ''
+      text.style.fontSize = Math.max(9, Math.min(19, (Number(property('Fontsize')) || 36) / 2.7)) + 'px'
+      text.style.color = cssAssColor(property('PrimaryColour'))
+      text.style.webkitTextStroke = Math.min(2, Math.max(0, Number(property('Outline')) || 0) / 3) + 'px ' + cssAssColor(property('OutlineColour'))
+      text.style.fontWeight = Number(property('Bold')) ? 'bold' : 'normal'
+      text.style.fontStyle = Number(property('Italic')) ? 'italic' : 'normal'
+      text.style.textDecoration = [Number(property('Underline')) && 'underline', Number(property('StrikeOut')) && 'line-through'].filter(Boolean).join(' ')
+      text.style.transform = `rotate(${-(Number(property('Angle')) || 0)}deg) scale(${(Number(property('ScaleX')) || 100) / 100}, ${(Number(property('ScaleY')) || 100) / 100})`
+      text.style.letterSpacing = (Number(property('Spacing')) || 0) / 3 + 'px'
+      const shadow = (Number(property('Shadow')) || 0) / 3
+      text.style.textShadow = shadow > 0 ? `${shadow}px ${shadow}px ${cssAssColor(property('BackColour'))}` : 'none'
+      preview.append(text)
+      const label = element('span', 'style-list-name', name)
+      row.title = name
+      if (nameCounts.get(name) > 1) {
+        const index = project.tracks.findIndex(track => track.id === item.trackId)
+        const source = index < 0 ? '工程样式' : `${trackLabel(project.tracks[index])} · ${project.tracks[index].ass?.sourceName ?? project.tracks[index].name}`
+        label.append(element('small', 'style-list-source', source))
+        row.title = `${name} · ${source}`
+      }
+      const font = element('span', 'style-list-font', property('Fontname') || '—')
+      font.title = font.textContent
+      const actions = element('div', 'style-row-actions')
+      actions.append(
+        styleButton('pencil', '编辑', () => openStyle(item.id)),
+        styleButton('copy', '复制', () => createStyle(item)),
+        styleDeleteButton(item),
+      )
+      row.append(preview, label, font, element('span', 'style-list-size', property('Fontsize') || '—'), actions)
+      return row
+    }))
+    if (!styles.length) list.append(element('p', 'muted', '暂无样式'))
+    refreshInspectorPreview(projectChanged)
+    return
+  }
+  const form = element('form', 'style-form')
+  const inputs = new Map()
+  for (const [heading, fields] of styleSections) {
+    const section = element('fieldset', 'style-section')
+    section.append(element('legend', '', heading))
+    const grid = element('div', 'columns')
+    for (const [key, title, type] of fields) {
+      const control = styleControl(key, title, type, field(style.fields, key)?.trim())
+      inputs.set(key, control.input)
+      grid.append(control.wrapper)
+    }
+    section.append(grid)
+    form.append(section)
+  }
+  const actions = element('div', 'dialog-actions style-actions')
+  const back = styleButton('back', '返回样式列表', () => openStyle(undefined))
+  const discard = element('button', 'discard-draft', '取消修改')
+  discard.type = 'button'
+  const apply = element('button', 'primary', '保存')
+  apply.type = 'submit'
+  actions.append(back, element('strong', 'style-editor-name', styleName(style)), discard, styleDeleteButton(style), apply)
+  form.prepend(actions)
+  form.addEventListener('submit', event => {
+    event.preventDefault()
+    const name = inputs.get('Name').value.trim()
+    const font = inputs.get('Fontname').value.trim()
+    if (!name || !font || /[,\r\n\0]/.test(name + font)) {
+      status('名称和字体不能为空或包含逗号。')
+      return
+    }
+    const previousName = styleName(style)
+    const conflicts = name !== previousName && project.styles.some(item =>
+      styleName(item).toLowerCase() === name.toLowerCase() &&
+      (item.trackId === style.trackId || item.trackId === undefined || style.trackId === undefined))
+    if (conflicts) {
+      status('同一轨道或可用于该轨道的工程样式已使用这个名称。')
+      return
+    }
+    const cueEdits = []
+    if (name !== previousName) {
+      const controls = [...$('cue-form').querySelectorAll('input,textarea,select')]
+      const textIndex = controls.indexOf($('cue-text'))
+      const styleIndex = controls.indexOf($('cue-style'))
+      const renamingDefault = style.trackId !== undefined && previousName.toLowerCase() === 'default'
+      for (const cue of assStyleResetCues(project, style)) {
+        const draft = cueDrafts.get(cue.id)
+        const draftText = draft?.get(textIndex)
+        if ((draftText !== undefined && renameAssStyleReset(draftText, previousName, name) !== draftText) ||
+            (renamingDefault && draft?.get(styleIndex) === '')) {
+          status('请先应用或取消含此样式引用的字幕草稿。')
+          return
+        }
+        const text = renameAssStyleReset(cue.text, previousName, name)
+        const keepDefault = renamingDefault && (cue.style === undefined || cue.style === null)
+        if (text !== cue.text || keepDefault) cueEdits.push({ cue, text, keepDefault })
+      }
+      if (cueEdits.some(({ cue, text }) => cue.text !== text) && /[\\{}()\0]/.test(name)) {
+        status('行内引用的样式名称不能包含反斜杠、括号或空字符。')
+        return
+      }
+    }
+    edit(() => {
+      styleDrafts.delete(style.id)
+      for (const { cue, text, keepDefault } of cueEdits) {
+        cue.text = text
+        if (keepDefault) cue.style = style.id
+      }
+      for (const [key, input] of inputs) {
+        const old = field(style.fields, key)
+        const value = styleFieldValue(input, old)
+        if (value !== old?.trim()) setField(style.fields, key, value)
+      }
+    })
+    status('已保存样式')
+  })
+  editor.append(form)
+  bindDraft(form, styleDrafts, style.id, renderStyleList)
+  readStylePreview = () => {
+    let fields
+    for (const [key, input] of inputs) {
+      // Keep the committed name so ASS inline style references still resolve.
+      if (key === 'Name') continue
+      const controls = input.type === 'color' ? [...input.parentElement.querySelectorAll('input')] : [input]
+      if (controls.some(control => !control.validity.valid)) continue
+      const old = field(style.fields, key)
+      const value = styleFieldValue(input, old)
+      if (!value || value === old?.trim() || (key === 'Fontname' && /[,\r\n]/.test(value))) continue
+      fields ??= { ...style.fields }
+      setField(fields, key, value)
+    }
+    return fields && { ...style, fields }
+  }
+  let previewFrame = 0
+  function schedulePreview() {
+    if (previewFrame) return
+    previewFrame = requestAnimationFrame(() => {
+      previewFrame = 0
+      if (form.isConnected) refreshInspectorPreview()
+    })
+  }
+  form.addEventListener('input', schedulePreview)
+  form.addEventListener('change', schedulePreview)
+  refreshInspectorPreview(projectChanged)
+}
+
+function openStyle(id) {
+  selectedStyle = id
+  $('styles-panel').scrollTop = 0
+  renderStyleList()
+  if (id) $('style-editor').querySelector('input')?.focus({ preventScroll: true })
+}
+
+function styleButton(symbol, label, callback) {
+  const button = element('button', 'style-icon-button')
+  button.type = 'button'
+  button.title = label
+  button.setAttribute('aria-label', label)
+  button.append(icon(symbol))
+  button.addEventListener('click', callback)
+  return button
+}
+
+function styleDeleteButton(style) {
+  const button = styleButton('trash', '删除', () => {
+    const bounds = button.getBoundingClientRect()
+    popup.style.left = Math.max(8, bounds.right - 220) + 'px'
+    const below = bounds.bottom + 5
+    popup.style.top = (below + 92 <= window.innerHeight ? below : bounds.top - 92) + 'px'
+    popup.showPopover()
+    cancel.focus()
+  })
+  button.classList.add('style-delete')
+  button.setAttribute('aria-haspopup', 'dialog')
+  const popup = element('div', 'style-delete-confirm')
+  popup.popover = 'auto'
+  popup.setAttribute('role', 'dialog')
+  popup.setAttribute('aria-label', '确认删除样式')
+  const actions = element('div', 'dialog-actions')
+  const cancel = element('button', '', '取消')
+  const confirm = element('button', 'style-delete', '删除')
+  cancel.type = confirm.type = 'button'
+  cancel.addEventListener('click', () => { popup.hidePopover(); button.focus() })
+  confirm.addEventListener('click', () => {
+    popup.hidePopover()
+    deleteStyle(style)
+  })
+  actions.append(cancel, confirm)
+  popup.append(element('div', '', `删除「${styleName(style)}」？`), actions)
+  const wrapper = element('span', 'style-delete-wrap')
+  wrapper.append(button, popup)
+  return wrapper
+}
+
+function deleteStyle(style) {
+  const name = styleName(style)
+  const controls = [...$('cue-form').querySelectorAll('input,textarea,select')]
+  const textIndex = controls.indexOf($('cue-text'))
+  const styleIndex = controls.indexOf($('cue-style'))
+  const resetCues = new Set(assStyleResetCues(project, style))
+  const cueEdits = project.tracks.flatMap(track => track.cues.flatMap(cue => {
+    const usesStyle = cue.style === style.id ||
+      (track.ass && !cue.style && fallbackAssStyle(track, cue, project.styles)?.id === style.id)
+    const text = resetCues.has(cue) ? renameAssStyleReset(cue.text, name, '') : cue.text
+    return usesStyle || text !== cue.text ? [{ track, cue, usesStyle, text }] : []
+  }))
+  const draftUsesStyle = [...cueDrafts].some(([id, changes]) => {
+    if (changes.get(styleIndex) === style.id) return true
+    const text = changes.get(textIndex)
+    return text !== undefined && resetCues.has(findCue(project, id)) && renameAssStyleReset(text, name, '') !== text
+  })
+  if (draftUsesStyle || cueEdits.some(({ cue }) => cueDrafts.has(cue.id))) {
+    status('请先应用或取消引用此样式的字幕草稿。')
+    return
+  }
+  edit(() => {
+    for (const { track, cue, usesStyle, text } of cueEdits) {
+      cue.text = text
+      if (usesStyle) cue.style = track.ass ? null : undefined
+    }
+    const owner = project.tracks.find(track => track.id === style.trackId)
+    if (owner?.ass) owner.ass.lines[style.line] = ''
+    styleDrafts.delete(style.id)
+    project.styles = project.styles.filter(item => item.id !== style.id)
+    if (selectedStyle === style.id) selectedStyle = undefined
+  })
+  status('已删除样式，可撤销')
+}
+
+function createStyle(source) {
+  const base = source ? styleName(source) + ' 副本' : '样式'
+  let name = base
+  for (let index = 2; project.styles.some(style => styleName(style) === name); index++) name = base + ' ' + index
+  const style = newStyle(name, source?.fields)
+  edit(() => {
+    project.styles.push(style)
+    selectedStyle = source ? undefined : style.id
+  })
+}
+
+function updateSplitPreview() {
+  const current = track()
+  if (!current) return
+  const reverse = $('split-order').value === 'reverse'
+  const entries = inspectTrackSplit(project, current)
+  const pairs = entries.filter(entry => entry.lines)
+  const exceptions = entries.filter(entry => entry.reason)
+  $('split-summary').textContent = `${pairs.length} 条可拆分 · ${exceptions.length} 条原文保留在上轨`
+  $('split-dialog').querySelector('button[value="confirm"]').disabled = !pairs.length
+  const examples = [...pairs.slice(0, 3), ...exceptions.slice(0, 3)].map(({ cue, lines, reason }) => {
+    const section = element('div', reason ? 'split-entry split-exception' : 'split-entry')
+    const timestamp = `${printTime(cue.start, '.')} – ${printTime(cue.end, '.')}`
+    const detail = lines ? `上轨 ${lines[reverse ? 1 : 0]}\n下轨 ${lines[reverse ? 0 : 1]}` : `${reason}\n${cue.text}`
+    section.append(element('span', 'split-time', timestamp), element('p', '', detail))
+    return section
+  })
+  $('split-preview').replaceChildren(...examples)
+}
+
+async function canDecodeVideo(reference) {
+  const candidate = document.createElement('video')
+  candidate.preload = 'auto'
+  let timer
+  try {
+    return await new Promise(resolve => {
+      candidate.addEventListener('loadeddata', () => resolve(candidate.videoWidth > 0 && candidate.videoHeight > 0), { once: true })
+      candidate.addEventListener('error', () => resolve(false), { once: true })
+      timer = setTimeout(() => resolve(false), 15000)
+      candidate.src = reference.url
+    })
+  } finally {
+    clearTimeout(timer)
+    candidate.removeAttribute('src')
+    candidate.load()
+  }
+}
+
+action('open-media', () => withProjectOperation(async () => {
+  const reference = await app.chooseMedia()
+  if (!reference) return
+  status('正在检查 ' + reference.name)
+  let accepted = false
+  try {
+    accepted = await canDecodeVideo(reference)
+  } finally {
+    if (!await app.finishMediaSelection(reference.token, accepted)) throw new Error('视频选择已失效，请重新选择。')
+  }
+  if (!accepted) throw new Error(`无法播放 ${reference.name}。请检查文件或尝试 H.264/AAC MP4。`)
+  project.media = reference.file
+  updateProjectTitle()
+  attachVideo(reference)
+  status('已打开视频')
+}))
+function updateProjectTitle() {
+  const name = projectDocument?.name ?? '未命名工程'
+  const modified = dirty() || hasPendingForm()
+  $('save-project').title = name + (modified ? '（有未保存修改）' : '')
+  document.title = projectDocument ? name + (modified ? ' ●' : '') + ' — SubX' : 'SubX'
+}
+
+async function withProjectOperation(callback) {
+  if (projectBusy) return
+  projectBusy = true
+  const controls = ['new-project', 'open-project', 'recent-projects', 'save-project',
+    'save-project-as', 'open-media', 'import-subtitles']
+  for (const id of controls) $(id).disabled = true
+  try {
+    await callback()
+  } finally {
+    projectBusy = false
+    for (const id of controls) $(id).disabled = false
+  }
+}
+
+function askBeforeChangingProject() {
+  const dialog = $('project-change-dialog')
+  const pending = hasPendingForm()
+  $('project-change-detail').hidden = !pending
+  if (pending) dialog.setAttribute('aria-describedby', 'project-change-detail')
+  else dialog.removeAttribute('aria-describedby')
+  dialog.querySelector('button[value="save"]').disabled = pending
+  dialog.returnValue = 'cancel'
+  return new Promise(resolve => {
+    dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true })
+    dialog.showModal()
+  })
+}
+
+function changeProject(callback) {
+  return withProjectOperation(async () => {
+    endDrag(drag?.pointer, false)
+    closeCueEditor(false)
+    const workspace = document.querySelector('.workspace')
+    switchingProject = true
+    workspace.inert = true
+    try {
+      if (dirty() || hasPendingForm()) {
+        const choice = await askBeforeChangingProject()
+        if (choice === 'cancel' || (choice === 'save' && !await writeCurrentProject(false))) return
+      }
+      await callback()
+    } finally {
+      switchingProject = false
+      workspace.inert = false
+    }
+  })
+}
+
+action('new-project', () => changeProject(() => {
+  reset(newWorkspaceProject(), null)
+  status('已新建工程')
+}))
+action('open-project', () => changeProject(async () => openResult(await app.openProject())))
+action('recent-projects', () => withProjectOperation(async () => {
+  const projects = await app.recentProjects()
+  const dialog = $('recent-dialog')
+  const names = projects.map(path => {
+    const button = element('button', '', path.split(/[\\/]/).pop())
+    button.type = 'button'
+    button.title = path
+    button.addEventListener('click', () => {
+      dialog.close()
+      changeProject(async () => openResult(await app.openProject(path))).catch(error => status(error.message))
+    })
+    return button
+  })
+  $('recent-list').replaceChildren(...(names.length ? names : [element('p', 'muted', '暂无最近工程')]))
+  dialog.showModal()
+}))
+async function writeCurrentProject(saveAs) {
+  if (hasPendingForm()) {
+    status('请先应用字幕修改或保存样式，再保存工程。')
+    return false
+  }
+  const saving = { revision, media: project.media }
+  const saveId = crypto.randomUUID()
+  let saved = false
+  let closing
+  projectSavePending = true
+  try {
+    const result = await app.saveProject(project, projectDocument?.id, saveAs, saveId)
+    if (result) {
+      saved = true
+      projectDocument = result
+      savedVersion = saving
+      updateProjectTitle()
+      status(dirty() || hasPendingForm() ? '已写入工程，仍有尚未保存的修改' : '已保存工程')
+    }
+  } finally {
+    projectSavePending = false
+    closing = await app.finishProjectSave(saveId)
+  }
+  return saved && !closing
+}
+
+const quitDialog = $('quit-dialog')
+let allowWindowClose = false
+let quitDialogBusy = false
+let closePromptBlockedUntil = 0
+
+function closeNeedsConfirmation() {
+  return projectSavePending || dirty() || hasPendingForm() ||
+    (editorOpen() && editorText.value !== initialEditorText)
+}
+
+function setQuitDialogBusy(busy) {
+  quitDialogBusy = busy
+  for (const id of ['quit-save', 'quit-discard', 'quit-cancel']) $(id).disabled = busy
+}
+
+function suppressClosePrompt() {
+  closePromptBlockedUntil = Date.now() + 700
+}
+
+function hideQuitDialog() {
+  if (quitDialog.open) quitDialog.close()
+}
+
+function showQuitDialog() {
+  if (quitDialogBusy) return
+  setQuitDialogBusy(false)
+  if (quitDialog.open) return
+  quitDialog.showModal()
+  $('quit-save').focus({ preventScroll: true })
+}
+
+async function saveThenClose() {
+  if (!quitDialog.open || quitDialogBusy) return
+  setQuitDialogBusy(true)
+  hideQuitDialog()
+  status('正在保存工程…')
+  let saved = false
+  let failure = ''
+  try {
+    saved = await writeCurrentProject(false)
+  } catch (error) {
+    failure = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
+  } finally {
+    setQuitDialogBusy(false)
+  }
+  if (!saved) {
+    suppressClosePrompt()
+    app.cancelClose()
+    status(failure || '已取消保存，窗口不会关闭')
+    return
+  }
+  if (closeNeedsConfirmation()) {
+    suppressClosePrompt()
+    app.cancelClose()
+    status('工程已保存，但仍有尚未保存的修改')
+    showQuitDialog()
+    return
+  }
+  allowWindowClose = true
+  app.allowClose()
+}
+
+function discardThenClose() {
+  if (!quitDialog.open) return
+  hideQuitDialog()
+  allowWindowClose = true
+  app.allowClose()
+}
+
+function cancelClosing() {
+  if (!quitDialog.open) return
+  hideQuitDialog()
+  app.cancelClose()
+}
+
+setQuitDialogBusy(false)
+$('quit-save').addEventListener('click', () => { void saveThenClose() })
+$('quit-discard').addEventListener('click', discardThenClose)
+$('quit-cancel').addEventListener('click', cancelClosing)
+quitDialog.addEventListener('cancel', event => {
+  event.preventDefault()
+  cancelClosing()
+})
+quitDialog.addEventListener('close', () => setQuitDialogBusy(false))
+
+app.onCloseRequest(() => {
+  if (quitDialog.open || quitDialogBusy) return
+  if (Date.now() < closePromptBlockedUntil) {
+    app.cancelClose()
+    return
+  }
+  if (!closeNeedsConfirmation()) {
+    allowWindowClose = true
+    app.allowClose()
+    return
+  }
+  showQuitDialog()
+})
+
+action('save-project', () => withProjectOperation(() => writeCurrentProject(false)))
+action('save-project-as', () => withProjectOperation(() => writeCurrentProject(true)))
+
+function confirmSrtImport(name, cueCount, issues) {
+  const dialog = $('srt-import-dialog')
+  $('srt-import-summary').textContent = `${name} · ${cueCount} 条有效字幕，${issues.length} 条有问题`
+  const visible = issues.slice(0, 50).map(issue => element('li', '', issue))
+  if (issues.length > visible.length) visible.push(element('li', '', `其余 ${issues.length - visible.length} 条未列出`))
+  const list = $('srt-import-issues')
+  list.replaceChildren(...visible)
+  list.scrollTop = 0
+  dialog.querySelector('button[value="confirm"]').hidden = !cueCount
+  dialog.querySelector('button[value="cancel"]').textContent = cueCount ? '取消' : '关闭'
+  dialog.returnValue = 'cancel'
+  return new Promise(resolve => {
+    dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true })
+    dialog.showModal()
+  })
+}
+
+action('import-subtitles', () => withProjectOperation(async () => {
+  const file = await app.chooseSubtitles()
+  if (!file) return
+  const ass = file.extension === '.ass' ? readAss(file.text) : null
+  const { cues, issues = [] } = ass ?? inspectSrt(file.text)
+  if (issues.length && !await confirmSrtImport(file.name, cues.length, issues)) return
+  if (!ass && !cues.length) {
+    status(`${file.name} 没有可导入的字幕。`)
+    return
+  }
+  const groups = ass && groupAssLayers(cues)
+  edit(() => {
+    if (ass) {
+      currentTrack = importAssLayers(project, ass, groups, file.name).id
+    } else {
+      if (project.tracks.length === 2 && project.tracks.every(track => track.starter && !track.cues.length && !track.ass)) {
+        project.tracks = []
+      }
+      const next = addTopTrack(project.tracks, cues)
+      next.name = file.name
+      currentTrack = next.id
+    }
+    selected = undefined
+    selectedCues.clear()
+    ensureSelection()
+  })
+  status('已导入 ' + cues.length + ' 条字幕' + (issues.length ? ` · 跳过 ${issues.length} 条` : ''))
+}))
+let exportSelection
+action('export-subtitles', () => {
+  if (switchingProject) return
+  const current = track()
+  const dialog = $('export-format')
+  if (!current || dialog.open) return
+  if (current.locked) {
+    status('轨道已锁定，解锁后可导出')
+    return
+  }
+  exportSelection = current
+  $('export-track-summary').textContent = trackLabel(current) + ' · ' + current.cues.length + ' 条字幕'
+  dialog.returnValue = 'cancel'
+  $('ass-export-note').hidden = !current.ass
+  dialog.querySelector('button[value="srt"]').disabled = !current.cues.length
+  dialog.showModal()
+  dialog.querySelector(`button[value="${current.ass ? 'ass' : 'srt'}"]`).focus()
+})
+async function exportTrack(current, format) {
+  const cues = format === 'srt'
+    ? assTextCues(current, !current.ass)
+    : current.cues
+  const skipped = current.cues.length - cues.length
+  const summary = skipped ? ' · 跳过 ' + skipped + ' 条无正文事件' : ''
+  if (format === 'srt' && !cues.length) {
+    status('此轨道没有可导出的字幕正文' + summary)
+    return
+  }
+  const layer = current.ass && !current.ass.indexed ? undefined : trackIndex(project.tracks, current)
+  const text = format === 'ass' ? writeAss(current, project.styles, project.settings?.fade, layer) : writeSrt(cues)
+  if (await app.exportSubtitles({ name: trackLabel(current), format, text })) {
+    status('已导出 ' + format.toUpperCase() + summary)
+  }
+}
+$('export-format').addEventListener('close', async () => {
+  const format = $('export-format').returnValue
+  const current = exportSelection
+  exportSelection = undefined
+  if (!['srt', 'ass'].includes(format) || !current || switchingProject) return
+  try { await exportTrack(current, format) } catch (error) { status(error.message) }
+})
+action('add-track', () => edit(() => {
+  const next = addTopTrack(project.tracks)
+  currentTrack = next.id
+  selected = undefined
+  selectedCues.clear()
+}))
+function focusTimelineCue(id) {
+  rows.find(row => row.buttons.has(id))?.buttons.get(id).focus({ preventScroll: true })
+}
+
+action('add-cue', () => {
+  if (switchingProject || drag) return
+  if (track()?.locked) {
+    status('轨道已锁定，解锁后可添加字幕')
+    return
+  }
+  video.pause()
+  if (linkMode) setLinkMode(false)
+  edit(() => {
+    let target = track()
+    if (!target) {
+      target = addTopTrack(project.tracks)
+      currentTrack = target.id
+    }
+    const start = Math.round(playheadPosition())
+    const cue = { id: crypto.randomUUID(), ...alignCue(editingBoundaries(), start, start + 2000), text: '', assText: true }
+    target.cues.push(cue)
+    selected = cue.id
+    selectedCues.clear()
+  })
+  revealTimelinePosition(time)
+  renderViewport()
+  // Bring a newly created block on a lower track into view as well.
+  const block = rows.find(row => row.buttons.has(selected))?.buttons.get(selected)
+  block?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  focusTimelineCue(selected)
+  status('已添加空字幕 · 按 Enter 或双击编辑正文')
+})
+
+const cueEditor = $('cue-editor-popover')
+const editorText = $('editor-text')
+const editorCount = $('editor-count')
+const editorError = $('editor-error')
+let editorCue
+let initialEditorText
+function editorOpen() {
+  return !cueEditor.hidden
+}
+
+function editorBlock() {
+  return rows.find(row => row.buttons.has(editorCue))?.buttons.get(editorCue)
+}
+
+function updateEditorCount() {
+  editorCount.textContent = String([...editorText.value].length)
+}
+
+// 编辑框紧贴字幕块上方；上方空间不够时落到块下方。
+function positionCueEditor() {
+  const block = editorBlock()
+  if (!block) return
+  const box = block.getBoundingClientRect()
+  const width = cueEditor.offsetWidth || 420
+  const height = cueEditor.offsetHeight || 130
+  const left = Math.max(8, Math.min(window.innerWidth - width - 8, box.left))
+  let top = box.top - height - 8
+  if (top < 8) top = Math.min(window.innerHeight - height - 8, box.bottom + 8)
+  cueEditor.style.left = Math.round(left) + 'px'
+  cueEditor.style.top = Math.round(top) + 'px'
+}
+
+function openCueEditor(owner, cue) {
+  if (switchingProject || linkMode || drag || editorOpen()) return
+  if (trackFor(cue.id)?.locked) {
+    status('轨道已锁定，解锁后可编辑正文')
+    return
+  }
+  video.pause()
+  if (selected !== cue.id || currentTrack !== owner.id) pick(owner, cue)
+  editorCue = cue.id
+  initialEditorText = $('cue-text').value
+  editorText.value = initialEditorText
+  editorError.hidden = true
+  updateEditorCount()
+  cueEditor.hidden = false
+  positionCueEditor()
+  editorText.focus({ preventScroll: true })
+  editorText.setSelectionRange(editorText.value.length, editorText.value.length)
+}
+
+function closeCueEditor(focus = true) {
+  if (!editorOpen()) return
+  const cue = editorCue
+  cueEditor.hidden = true
+  editorError.hidden = true
+  editorCue = undefined
+  if (focus && cue !== undefined && findCue(project, cue)) focusTimelineCue(cue)
+}
+
+function saveCueEditor() {
+  const cue = findCue(project, editorCue)
+  if (!cue) {
+    closeCueEditor(false)
+    return
+  }
+  const text = editorText.value
+  if (!trackFor(cue.id)?.ass && !cue.assText && hasEmptyLine(text)) {
+    editorError.textContent = '请删掉 SRT 正文首尾或中间的空行。'
+    editorError.hidden = false
+    editorText.focus()
+    return
+  }
+  editorError.hidden = true
+  // Committing text must keep any pending timing or style changes in the inspector.
+  const binding = inspectorForms.get($('cue-form'))
+  cueDrafts.get(cue.id)?.delete(binding.fields.indexOf($('cue-text')))
+  if (text !== cue.text) edit(() => { cue.text = text })
+  else {
+    renderCueForm()
+    updateProjectTitle()
+    refreshInspectorPreview()
+  }
+  status('已更新字幕正文')
+  closeCueEditor()
+}
+
+$('editor-save').addEventListener('click', saveCueEditor)
+$('editor-cancel').addEventListener('click', () => closeCueEditor())
+editorText.addEventListener('input', () => {
+  editorError.hidden = true
+  updateEditorCount()
+})
+editorText.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !event.isComposing) {
+    event.preventDefault()
+    closeCueEditor()
+    return
+  }
+  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.isComposing && event.keyCode !== 229) {
+    event.preventDefault()
+    if (!event.repeat) saveCueEditor()
+  }
+})
+
+function deleteSelectedCue(id = selected) {
+  if (drag || switchingProject) return
+  const ids = new Set(selectedCues)
+  if (selected !== undefined) ids.add(selected)
+  if (id !== undefined) ids.add(id)
+  const deletable = [...ids].filter(cueId => findCue(project, cueId))
+  if (!deletable.length) return
+  if (deletable.some(cueId => trackFor(cueId)?.locked)) {
+    status('轨道已锁定，解锁后可删除')
+    return
+  }
+  edit(() => {
+    for (const cueId of deletable) {
+      removeCue(project, cueId)
+      cueDrafts.delete(cueId)
+      if (selected === cueId) selected = undefined
+    }
+    selectedCues.clear()
+    linkStart = undefined
+  })
+  status(deletable.length > 1 ? '已删除 ' + deletable.length + ' 条字幕，可撤销' : '已删除字幕，可撤销')
+}
+
+function copyTimelineCue(owner, cue) {
+  clipboard = captureCue(owner, cue, project.styles)
+  status('已复制字幕')
+}
+
+function pasteTimelineCue() {
+  const target = track()
+  if (!target || !clipboard || drag || switchingProject) return
+  if (target.locked) {
+    status('轨道已锁定，解锁后可粘贴')
+    return
+  }
+  if (linkMode) setLinkMode(false)
+  video.pause()
+  edit(() => {
+    const cue = pasteCue(target, clipboard, Math.round(playheadPosition()), project.styles)
+    Object.assign(cue, alignCue(editingBoundaries(), cue.start, cue.end))
+    target.cues.push(cue)
+    selected = cue.id
+    selectedCues.clear()
+  })
+  revealTimelinePosition(time)
+  renderViewport()
+  const block = rows.find(row => row.track === target)?.buttons.get(selected)
+  block?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  focusTimelineCue(selected)
+  status('已粘贴字幕到「' + trackLabel(target) + '」')
+}
+
+function selectTrackCues() {
+  const owner = track()
+  if (!owner?.cues.length) return
+  if (linkMode) setLinkMode(false)
+  selectedCues = new Set(owner.cues.map(cue => cue.id))
+  selected = undefined
+  renderCueForm()
+  refreshInspectorPreview()
+  renderViewport()
+  status('已选中「' + trackLabel(owner) + '」的全部字幕')
+}
+
+const timelineMenu = $('timeline-menu')
+document.querySelector('.timeline-body').addEventListener('dblclick', event => {
+  if (event.target.closest('.cue, .track-heading, button')) return
+  const lane = event.target.closest('.track-lane')
+  const owner = lane && project.tracks.find(track => track.id === lane.dataset.trackId)
+  if (owner) chooseTrack(owner)
+})
+
+scroll.addEventListener('contextmenu', event => {
+  if (drag || switchingProject) return
+  event.preventDefault()
+  closeMenus()
+  if (timelineMenu.matches(':popover-open')) timelineMenu.hidePopover()
+  const block = event.target.closest('.cue')
+  const owner = block && trackFor(block.dataset.cueId)
+  const cue = owner?.cues.find(cue => cue.id === block.dataset.cueId)
+  const commands = cue ? [
+    ['copy', '复制字幕', () => copyTimelineCue(owner, cue)],
+    ['trash', '删除字幕', () => deleteSelectedCue(cue.id), Boolean(owner?.locked)],
+  ] : [
+    ['copy', '粘贴字幕到当前轨道', pasteTimelineCue, !clipboard || !track() || Boolean(track()?.locked)],
+    ['select', '选中当前轨道全部字幕块', selectTrackCues, !track()?.cues.length],
+  ]
+  timelineMenu.replaceChildren(...commands.map(([symbol, label, command, disabled]) => {
+    const button = element('button')
+    button.type = 'button'
+    button.setAttribute('role', 'menuitem')
+    button.disabled = Boolean(disabled)
+    button.append(icon(symbol), element('span', '', label))
+    button.addEventListener('click', () => {
+      timelineMenu.hidePopover()
+      if (block?.isConnected) block.focus({ preventScroll: true })
+      else $('ruler').focus({ preventScroll: true })
+      command()
+    })
+    return button
+  }))
+  timelineMenu.showPopover()
+  const box = event.target.getBoundingClientRect()
+  const x = event.clientX || box.left
+  const y = event.clientY || box.bottom
+  timelineMenu.style.left = Math.max(4, Math.min(x, innerWidth - timelineMenu.offsetWidth - 4)) + 'px'
+  timelineMenu.style.top = Math.max(4, Math.min(y, innerHeight - timelineMenu.offsetHeight - 4)) + 'px'
+  timelineMenu.querySelector('button:enabled')?.focus({ preventScroll: true })
+})
+
+timelineMenu.addEventListener('keydown', event => {
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+  event.preventDefault()
+  const items = [...timelineMenu.querySelectorAll('button:enabled')]
+  const offset = event.key === 'ArrowDown' ? 1 : -1
+  items[(items.indexOf(document.activeElement) + offset + items.length) % items.length]?.focus()
+})
+
+function hasEmptyLine(text) {
+  return /\n[ \t]*\n|^\n|\n$/.test(text)
+}
+
+action('delete-cue', () => deleteSelectedCue())
+action('split-track', () => withProjectOperation(async () => {
+  const current = track()
+  if (!current?.cues.length || current.ass) return
+  if (current.locked) {
+    status('轨道已锁定，解锁后可拆分双语')
+    return
+  }
+  if (current.cues.some(cue => cueDrafts.has(cue.id))) {
+    status('请先应用或取消当前轨道的字幕草稿，再拆分双语。')
+    return
+  }
+  const dialog = $('split-dialog')
+  dialog.returnValue = 'cancel'
+  updateSplitPreview()
+  const choice = await new Promise(resolve => {
+    dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true })
+    dialog.showModal()
+  })
+  if (choice !== 'confirm' || dialog.querySelector('button[value="confirm"]').disabled) return
+  edit(() => {
+    splitTrack(project, current.id, $('split-order').value === 'reverse')
+    currentTrack = project.tracks[0].id
+  })
+  status('已拆分双语字幕')
+}))
+$('split-order').addEventListener('change', updateSplitPreview)
+action('undo', () => restore(undo, redo))
+action('redo', () => restore(redo, undo))
+action('next-review', () => {
+  if (!reviewCues.length) return
+  const activeTrack = trackFor(selected)
+  const activeRow = rows.findIndex(row => row.track === activeTrack)
+  const activeCue = rows[activeRow]?.ordered.findIndex(cue => cue.id === selected) ?? -1
+  const { row, cue } = reviewCues.find(({ rowIndex, cueIndex }) =>
+    rowIndex > activeRow || (rowIndex === activeRow && cueIndex > activeCue)
+  ) ?? reviewCues[0]
+  if (linkMode) setLinkMode(false)
+  video.pause()
+  pick(row.track, cue)
+  seek(cue.start)
+  revealTimelinePosition(cue.start)
+  renderViewport()
+  const block = row.buttons.get(cue.id)
+  if (block) {
+    const bounds = scroll.getBoundingClientRect()
+    const target = block.getBoundingClientRect()
+    if (target.top < bounds.top) scroll.scrollTop -= bounds.top - target.top
+    else if (target.bottom > bounds.top + scroll.clientHeight) scroll.scrollTop += target.bottom - bounds.top - scroll.clientHeight
+  }
+  status(video.readyState && cue.start > mediaDuration ? '已定位待校对字幕，起点超出视频时长。' : '已定位待校对字幕')
+})
+action('complete-review', () => {
+  const cue = findCue(project, selected)
+  if (!cue?.splitNeedsReview) return
+  if (cueDrafts.has(cue.id)) {
+    status('请先应用或取消字幕修改。')
+    return
+  }
+  edit(() => { delete cue.splitNeedsReview })
+  $('cue-text').focus({ preventScroll: true })
+  status('已标为已校对')
+})
+action('add-style', () => createStyle())
+action('about-app', async () => {
+  $('about-version').textContent = await app.getVersion()
+  $('about-dialog').showModal()
+})
+
+action('styles-tab', () => switchTab('styles'))
+action('settings-tab', () => switchTab('settings'))
+action('cue-tab', () => switchTab('cue'))
+for (const key of ['fade', 'watermark']) {
+  $('project-' + key).addEventListener('change', event => edit(() => {
+    project.settings = { fade: false, watermark: false, ...project.settings, [key]: event.target.checked }
+  }))
+}
+const toolModes = { 'select-tool': 'select', 'split-tool': 'split', 'select-forward': 'select-forward', 'select-backward': 'select-backward' }
+for (const [id, mode] of Object.entries(toolModes)) action(id, () => setToolMode(mode))
+action('link-tool', () => setLinkMode(!linkMode))
+action('snap-tool', () => {
+  snapping = !snapping
+  setToolState('snap-tool', snapping)
+})
+const waveformOrder = ['symmetric', 'asymmetric', 'off']
+const waveformLabels = { symmetric: '对称', asymmetric: '非对称', off: '关闭' }
+const waveformIcons = { symmetric: 'wave-symmetric', asymmetric: 'wave-asymmetric', off: 'wave-off' }
+function setWaveformMode(mode) {
+  waveformMode = mode
+  const button = $('waveform-mode')
+  button.title = '波形：' + waveformLabels[mode]
+  button.setAttribute('aria-label', '波形显示：' + waveformLabels[mode])
+  button.setAttribute('aria-pressed', String(mode !== 'off'))
+  button.replaceChildren(icon(waveformIcons[mode]))
+  drawWaveform(timelineView().usable)
+}
+action('waveform-mode', () => setWaveformMode(waveformOrder[(waveformOrder.indexOf(waveformMode) + 1) % waveformOrder.length]))
+setWaveformMode(waveformMode)
+setToolState('snap-tool', snapping)
+function setToolMode(mode) {
+  toolMode = mode
+  if (linkMode) {
+    linkMode = false
+    setToolState('link-tool', false)
+  }
+  for (const [id, value] of Object.entries(toolModes)) setToolState(id, value === mode)
+  status({
+    select: '选择工具',
+    split: '分割工具：点击字幕块在点击处分割',
+    'select-forward': '向前选中：点击字幕选中它及其后方的字幕',
+    'select-backward': '向后选中：点击字幕选中它及其前方的字幕',
+  }[mode])
+  renderViewport()
+}
+function setLinkMode(enabled) {
+  linkMode = enabled
+  linkStart = undefined
+  setToolState('link-tool', enabled)
+  if (enabled) {
+    for (const id of Object.keys(toolModes)) setToolState(id, false)
+    status('选择不同轨道的两个字幕块，或点击已链接的字幕块解除链接。')
+  } else {
+    setToolMode('select')
+  }
+  renderViewport()
+}
+function setToolState(id, isActive) {
+  $(id).classList.toggle('selected', isActive)
+  $(id).setAttribute('aria-pressed', String(isActive))
+}
+function splitCueAt(owner, cue, at) {
+  if (owner.locked) {
+    status('轨道已锁定，解锁后可分割')
+    return
+  }
+  if (cue.end - cue.start < 3) {
+    status('字幕太短，无法继续分割')
+    return
+  }
+  const grid = editingBoundaries()
+  const timing = alignCue(grid, cue.start, cue.end)
+  const position = grid.length >= 2 ? nearestBoundary(grid, at, timing.start + 1, timing.end - 1) : Math.max(cue.start + 1, Math.min(cue.end - 1, Math.round(at)))
+  if (position === undefined) { status('字幕不足两帧，无法分割'); return }
+  if (position <= cue.start || position >= cue.end) return
+  edit(() => {
+    const tail = { ...cue, id: crypto.randomUUID(), start: position, end: timing.end }
+    cue.start = timing.start
+    cue.end = position
+    owner.cues.push(tail)
+    project.links = (project.links ?? []).filter(pair => !pair.includes(cue.id))
+    selected = cue.id
+    selectedCues.clear()
+  })
+  status('已在 ' + printTime(position, '.') + ' 处分割字幕')
+}
+function splitSelectedCue() {
+  const cue = findCue(project, selected)
+  if (!cue) {
+    status('请先选中一条字幕')
+    return
+  }
+  const owner = trackFor(cue.id)
+  if (owner) splitCueAt(owner, cue, playheadPosition())
+}
+function trimSelectedToPlayhead(edge) {
+  const cue = findCue(project, selected)
+  if (!cue) {
+    status('请先选中一条字幕')
+    return
+  }
+  if (trackFor(cue.id)?.locked) {
+    status('轨道已锁定，解锁后可裁剪')
+    return
+  }
+  const at = Math.round(playheadPosition())
+  if (at <= cue.start || at >= cue.end) {
+    status('请把播放头移到字幕内部再裁剪')
+    return
+  }
+  edit(() => { Object.assign(cue, alignCue(editingBoundaries(), edge === 'start' ? at : cue.start, edge === 'end' ? at : cue.end)) })
+  status(edge === 'start' ? '已向左裁剪到播放头' : '已向右裁剪到播放头')
+}
+function selectCueRange(owner, cue, direction) {
+  const ordered = [...owner.cues].sort((left, right) => left.start - right.start || left.end - right.end)
+  const index = ordered.findIndex(item => item.id === cue.id)
+  if (index < 0) return
+  const slice = direction === 'forward' ? ordered.slice(index) : ordered.slice(0, index + 1)
+  selectedCues = new Set(slice.map(item => item.id))
+  selected = undefined
+  currentTrack = owner.id
+  refreshTrackControls()
+  renderCueForm()
+  refreshInspectorPreview()
+  renderViewport()
+  status((direction === 'forward' ? '已向前选中 ' : '已向后选中 ') + slice.length + ' 条字幕')
+}
+function toggleMarker() {
+  if (switchingProject) return
+  const at = Math.round(playheadPosition())
+  project.markers ??= []
+  const index = project.markers.findIndex(value => Math.abs(value - at) <= 60)
+  edit(() => {
+    if (index >= 0) project.markers.splice(index, 1)
+    else {
+      project.markers.push(at)
+      project.markers.sort((left, right) => left - right)
+    }
+  })
+  status(index >= 0 ? '已删除播放头处的标记' : '已在播放头处添加标记')
+}
+function deleteCurrentTrack() {
+  if (switchingProject) return
+  const owner = track()
+  if (!owner) {
+    status('没有可删除的轨道')
+    return
+  }
+  if (owner.locked) {
+    status('轨道已锁定，解锁后可删除')
+    return
+  }
+  const index = project.tracks.indexOf(owner)
+  const cueIds = new Set(owner.cues.map(cue => cue.id))
+  edit(() => {
+    project.tracks.splice(index, 1)
+    project.links = (project.links ?? []).filter(pair => !pair.some(id => cueIds.has(id)))
+    for (const id of cueIds) cueDrafts.delete(id)
+    currentTrack = project.tracks[Math.min(index, project.tracks.length - 1)]?.id
+    selected = undefined
+    selectedCues.clear()
+    linkStart = undefined
+  })
+  status('已删除轨道「' + trackLabel(owner) + '」，可撤销')
+}
+action('delete-track', deleteCurrentTrack)
+action('menu-delete-track', deleteCurrentTrack)
+action('split-cue', splitSelectedCue)
+action('trim-start', () => trimSelectedToPlayhead('start'))
+action('trim-end', () => trimSelectedToPlayhead('end'))
+action('timeline-delete', () => deleteSelectedCue())
+action('toggle-marker', toggleMarker)
+
+$('cue-form').addEventListener('submit', event => {
+  event.preventDefault()
+  const cue = findCue(project, selected)
+  if (!cue) return
+  let start = readTime($('cue-start').value)
+  let end = readTime($('cue-end').value)
+  const text = $('cue-text').value.replace(/\r\n?/g, '\n')
+  if (!trackFor(cue.id)?.ass && !cue.assText && hasEmptyLine(text)) {
+    status('请删掉 SRT 正文首尾或中间的空行。')
+    return
+  }
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start) {
+    status('请输入有效时间，且结束时间晚于开始时间。')
+    return
+  }
+  if (start !== cue.start || end !== cue.end) ({ start, end } = alignCue(editingBoundaries(), start, end))
+  edit(() => {
+    cueDrafts.delete(cue.id)
+    cue.start = start
+    cue.end = end
+    cue.text = text
+    const style = $('cue-style').value
+    if (style) cue.style = style
+    else if (cue.style !== undefined) cue.style = cue.ass ? null : undefined
+  })
+  status('已更新字幕')
+})
+
+action('play', async () => {
+  if (video.paused) await video.play()
+  else video.pause()
+})
+function setPreviewMaximized(maximize) {
+  if (monitor.classList.contains('preview-maximized') === maximize) return
+  monitor.classList.toggle('preview-maximized', maximize)
+  const button = $('fullscreen-preview')
+  button.setAttribute('aria-pressed', String(maximize))
+  button.setAttribute('aria-label', maximize ? '退出全屏预览' : '全屏预览视频')
+  button.title = maximize ? '退出全屏预览' : '全屏预览'
+  button.replaceChildren(icon(maximize ? 'collapse' : 'expand'))
+  requestAnimationFrame(fitPicture)
+}
+action('fullscreen-preview', () => setPreviewMaximized(!monitor.classList.contains('preview-maximized')))
+$('preview-progress').addEventListener('input', event => {
+  if (mediaDuration && video.readyState) seek(mediaDuration * Number(event.target.value) / 1000)
+})
+function syncPlayback() {
+  $('play').replaceChildren(icon(video.paused ? 'play' : 'pause'))
+  $('play').title = video.paused ? '播放' : '暂停'
+  $('play').setAttribute('aria-label', video.paused ? '播放' : '暂停')
+}
+video.addEventListener('play', () => { rulerFrame = undefined; syncPlayback() })
+video.addEventListener('pause', syncPlayback)
+video.addEventListener('ended', syncPlayback)
+video.addEventListener('loadedmetadata', () => {
+  mediaDuration = Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : 0
+  const reference = waveformMedia
+  if (reference && mediaDuration) {
+    app.frameTimes(reference.token).then(result => {
+      if (waveformMedia !== reference) return
+      frameTimes = result?.filter(at => at < mediaDuration)
+      $('ruler').dataset.frameIndex = frameTimes?.length ? 'ready' : 'unavailable'
+      $('ruler').title = frameTimes?.length ? '' : '无法读取帧时间。逐帧定位需要本机 ffprobe。'
+      if (frameTimes?.length === 1) frameGap = mediaDuration
+      for (let index = 1; index < (frameTimes?.length ?? 0); index++) {
+        frameGap = Math.min(frameGap, frameTimes[index] - frameTimes[index - 1])
+      }
+      renderViewport()
+    }).catch(() => {
+      if (waveformMedia !== reference) return
+      $('ruler').dataset.frameIndex = 'unavailable'
+      $('ruler').title = '无法读取视频帧时间。'
+    })
+    app.waveform(reference.token, video.duration).then(result => {
+      if (waveformMedia !== reference) return
+      waveform = result
+      $('waveform').dataset.hasAudio = String(Boolean(result))
+      drawWaveform(timelineView().usable)
+    }).catch(() => {})
+  }
+  refreshInspectorPreview(true)
+  fitPicture()
+  renderViewport()
+})
+video.addEventListener('loadeddata', () => {
+  $('empty-video').hidden = true
+  $('play').disabled = false
+  applyQuality()
+})
+video.addEventListener('emptied', () => { $('play').disabled = true })
+video.addEventListener('error', () => {
+  if (!video.getAttribute('src')) return
+  $('play').disabled = true
+  $('open-media').textContent = '重新定位视频'
+  $('empty-video-message').textContent = '视频无法播放'
+  $('empty-video-message').hidden = false
+  $('empty-video').hidden = false
+  video.hidden = true
+  canvas.hidden = true
+  status('无法播放此视频。请检查文件或尝试 H.264/AAC MP4。')
+})
+video.addEventListener('seeking', () => {
+  if (rulerFrame !== undefined && Math.abs(video.currentTime * 1000 - rulerFrame) > .51) rulerFrame = undefined
+  presentedFrameTime = null
+  observeVideoFrames()
+})
+video.addEventListener('seeked', () => {
+  time = Math.round(video.currentTime * 1000)
+  applyQuality()
+  updatePreview()
+})
+video.addEventListener('timeupdate', () => {
+  if (!video.seeking) {
+    time = Math.round(video.currentTime * 1000)
+    updatePreview()
+  }
+})
+function observeVideoFrames() {
+  if (frameRequest !== undefined) video.cancelVideoFrameCallback(frameRequest)
+  const generation = ++frameGeneration
+  function frameReady(_now, metadata) {
+    if (generation !== frameGeneration) return
+    frameRequest = video.requestVideoFrameCallback(frameReady)
+    if (!video.seeking) {
+      // A frame's start can precede the exact playback position, especially when paused.
+      time = Math.round(video.currentTime * 1000)
+      presentedFrameTime = Math.round(metadata.mediaTime * 1000)
+      applyQuality()
+      updatePreview()
+    }
+  }
+  frameRequest = video.requestVideoFrameCallback(frameReady)
+}
+$('quality').addEventListener('change', applyQuality)
+
+const ruler = $('ruler')
+let rulerPointer
+let rulerScrollFrame = 0
+function seekWithPointer(event) {
+  video.pause()
+  const bounds = scroll.getBoundingClientRect()
+  const x = Math.max(bounds.left + $('track-headings').offsetWidth, Math.min(bounds.right - 1, event.clientX))
+  seekFrame((x - ruler.getBoundingClientRect().left) * 1000 / pixelsPerSecond)
+}
+function scrollRulerPointer() {
+  if (!rulerPointer) return
+  const bounds = scroll.getBoundingClientRect()
+  const left = bounds.left + $('track-headings').offsetWidth
+  const right = bounds.right
+  const distance = rulerPointer.x < left + 24 ? rulerPointer.x - (left + 24) :
+    rulerPointer.x > right - 24 ? rulerPointer.x - (right - 24) : 0
+  if (distance) {
+    const before = scroll.scrollLeft
+    scroll.scrollLeft += Math.max(-24, Math.min(24, distance * .35))
+    if (scroll.scrollLeft !== before) seekWithPointer({ clientX: rulerPointer.x })
+  }
+  rulerScrollFrame = requestAnimationFrame(scrollRulerPointer)
+}
+function endRulerPointer(event) {
+  if (rulerPointer?.id !== event.pointerId) return
+  rulerPointer = undefined
+  cancelAnimationFrame(rulerScrollFrame)
+  rulerScrollFrame = 0
+}
+ruler.addEventListener('pointerdown', event => {
+  if (event.button !== 0) return
+  event.preventDefault()
+  ruler.focus({ preventScroll: true })
+  ruler.setPointerCapture(event.pointerId)
+  rulerPointer = { id: event.pointerId, x: event.clientX }
+  rulerScrollFrame = requestAnimationFrame(scrollRulerPointer)
+  seekWithPointer(event)
+})
+ruler.addEventListener('pointermove', event => {
+  if (ruler.hasPointerCapture(event.pointerId)) {
+    rulerPointer.x = event.clientX
+    seekWithPointer(event)
+  }
+})
+ruler.addEventListener('pointerup', endRulerPointer)
+ruler.addEventListener('pointercancel', endRulerPointer)
+ruler.addEventListener('lostpointercapture', endRulerPointer)
+window.addEventListener('blur', () => { if (rulerPointer) endRulerPointer({ pointerId: rulerPointer.id }) })
+
+const selectionBox = $('selection-box')
+let marquee
+function marqueePoint(event) {
+  const bounds = $('track-data').getBoundingClientRect()
+  return { x: event.clientX - bounds.left, y: event.clientY - bounds.top }
+}
+function updateMarquee(event) {
+  if (!marquee || marquee.id !== event.pointerId) return
+  const point = marqueePoint(event)
+  if (!marquee.active && Math.hypot(event.clientX - marquee.clientX, event.clientY - marquee.clientY) < 4) return
+  marquee.active = true
+  const left = Math.min(marquee.x, point.x), right = Math.max(marquee.x, point.x)
+  const top = Math.min(marquee.y, point.y), bottom = Math.max(marquee.y, point.y)
+  Object.assign(selectionBox.style, { left: left + 'px', top: top + 'px', width: (right - left) + 'px', height: (bottom - top) + 'px' })
+  selectionBox.hidden = false
+  selected = undefined
+  selectedCues = new Set()
+  for (const row of rows) {
+    if (row.track.locked) continue
+    const laneTop = $('track-lanes').offsetTop + row.lane.offsetTop
+    for (const cue of row.ordered) {
+      const cueTop = laneTop + row.laneById.get(cue.id) * (CUE_HEIGHT + CUE_LANE_GAP) + CUE_LANE_PADDING
+      if (width(cue.start) < right && width(cue.start) + Math.max(14, width(cue.end - cue.start)) > left &&
+          cueTop < bottom && cueTop + CUE_HEIGHT > top) selectedCues.add(cue.id)
+    }
+  }
+  refreshTrackControls()
+  renderCueForm()
+  renderViewport()
+}
+function endMarquee(event, commit = true) {
+  if (!marquee || marquee.id !== event.pointerId) return
+  if (!commit) {
+    selected = marquee.selected
+    selectedCues = marquee.selectedCues
+  }
+  marquee = undefined
+  selectionBox.hidden = true
+  refreshTrackControls()
+  renderCueForm()
+  refreshInspectorPreview()
+  renderViewport()
+}
+$('track-data').addEventListener('pointerdown', event => {
+  if (event.button !== 0 || toolMode !== 'select' || linkMode || !event.target.closest('.track-lane') || event.target.closest('.cue')) return
+  event.preventDefault()
+  const point = marqueePoint(event)
+  marquee = { id: event.pointerId, ...point, clientX: event.clientX, clientY: event.clientY, selected, selectedCues: new Set(selectedCues), active: false }
+  event.currentTarget.setPointerCapture(event.pointerId)
+})
+$('track-data').addEventListener('pointermove', updateMarquee)
+$('track-data').addEventListener('pointerup', endMarquee)
+$('track-data').addEventListener('pointercancel', event => endMarquee(event, false))
+$('track-data').addEventListener('lostpointercapture', event => endMarquee(event, false))
+window.addEventListener('blur', () => { if (marquee) endMarquee({ pointerId: marquee.id }, false) })
+ruler.addEventListener('keydown', event => {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+  event.preventDefault()
+  video.pause()
+  const direction = event.key === 'ArrowLeft' ? -1 : 1
+  if (frameTimes?.length && !event.shiftKey) seekFrame(playheadPosition(), direction)
+  else seekFrame(playheadPosition() + direction * (event.shiftKey ? 1000 : 100))
+  revealTimelinePosition(time)
+})
+function revealTimelinePosition(target) {
+  const usable = Math.max(1, scroll.clientWidth - $('track-headings').offsetWidth)
+  const position = width(target)
+  const start = scroll.scrollLeft
+  if (position < start) {
+    scroll.scrollLeft = position - playheadMargin
+  } else if (position + 1 > start + usable) {
+    scroll.scrollLeft = position - usable + playheadMargin
+  }
+}
+window.addEventListener('pointermove', pointerMove)
+window.addEventListener('pointerup', event => endDrag(event.pointerId, true))
+window.addEventListener('pointercancel', event => endDrag(event.pointerId, false))
+window.addEventListener('blur', () => endDrag(drag?.pointer, false))
+window.addEventListener('keydown', event => {
+  // isComposing can be false at the start or end of IME input.
+  if (event.isComposing || event.keyCode === 229) return
+  if (event.key === 'Escape' && drag) endDrag(drag.pointer, false)
+  if (event.key === 'Escape' && marquee) endMarquee({ pointerId: marquee.id }, false)
+  if (switchingProject || document.querySelector('dialog[open]')) return
+  if (event.key === 'Escape' && monitor.classList.contains('preview-maximized')) {
+    event.preventDefault()
+    setPreviewMaximized(false)
+    return
+  }
+  if (event.key === 'Escape' && linkStart) {
+    linkStart = undefined
+    renderViewport()
+    status('已取消配对')
+    return
+  }
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey) {
+    const command = { n: 'new-project', o: 'open-project', i: 'import-subtitles', e: 'export-subtitles', q: 'menu-quit' }[event.key.toLowerCase()]
+    if (command) {
+      event.preventDefault()
+      if (!event.repeat) $(command).click()
+      return
+    }
+  }
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 's') {
+    event.preventDefault()
+    if (!event.repeat) $(event.shiftKey ? 'save-project-as' : 'save-project').click()
+    return
+  }
+  if (event.target.closest?.('input,textarea,select,dialog')) return
+  if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.target.closest?.('.timeline')) {
+    const key = event.key.toLowerCase()
+    const cue = findCue(project, selected)
+    if (key === 'c' && cue) {
+      event.preventDefault()
+      copyTimelineCue(trackFor(cue.id), cue)
+    } else if (key === 'v' && clipboard && track()) {
+      event.preventDefault()
+      pasteTimelineCue()
+    } else if (key === 'a' && track()?.cues.length) {
+      event.preventDefault()
+      selectTrackCues()
+    }
+  }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+    event.preventDefault()
+    if (event.shiftKey) restore(redo, undo)
+    else restore(undo, redo)
+  }
+  if ((event.key === 'Delete' || event.key === 'Backspace') && !event.repeat &&
+      !event.metaKey && !event.ctrlKey && !event.altKey && findCue(project, selected)) {
+    event.preventDefault()
+    deleteSelectedCue()
+  }
+  if (event.code === 'Space' && !event.target.closest?.('button')) {
+    event.preventDefault()
+    if (!$('play').disabled && !event.repeat) $('play').click()
+  }
+})
+for (const eventName of ['input', 'change']) {
+  document.querySelector('.inspector').addEventListener(eventName, event => {
+    const form = event.target.closest('#cue-form, #style-editor form')
+    if (!form) return
+    recordDraft(form)
+    updateProjectTitle()
+    if (event.target === $('cue-text') && !cuePreviewFrame) {
+      cuePreviewFrame = requestAnimationFrame(() => {
+        cuePreviewFrame = 0
+        refreshInspectorPreview()
+      })
+    }
+  })
+}
+// 界面文字只作为界面展示，禁止拖拽选中或生成原生拖拽幽灵图；输入框和字幕编辑框例外。
+for (const type of ['dragstart', 'selectstart']) {
+  document.addEventListener(type, event => {
+    if (event.target.closest?.('input, textarea, [contenteditable="true"]')) return
+    event.preventDefault()
+  })
+}
+
+window.addEventListener('beforeunload', event => {
+  if (!allowWindowClose && closeNeedsConfirmation()) {
+    event.preventDefault()
+    event.returnValue = false
+  }
+})
+scroll.addEventListener('scroll', renderViewport, { passive: true })
+$('zoom').addEventListener('input', () => {
+  const anchor = zoomAnchor()
+  setZoom(Number($('zoom').value), anchor.time, anchor.offset)
+})
+
+// The two seconds after the content participate in scrolling, but do not set the fit scale.
+function contentTime() {
+  return timelineEnd() + timelineTail
+}
+
+function fitDuration() {
+  return mediaDuration || timelineEnd()
+}
+
+function zoomBounds(usable) {
+  const min = usable * 1000 / fitDuration()
+  return { min, max: Math.max(min, 320, frameTickSpacing * 1000 / frameGap) }
+}
+
+function setZoom(next, anchor, offset = 0) {
+  const { min, max } = zoomBounds(timelineView().usable)
+  fitZoom = next <= min + .001
+  pixelsPerSecond = Math.min(max, Math.max(min, next))
+  renderViewport()
+  if (fitZoom) scroll.scrollLeft = 0
+  else if (anchor !== undefined) scroll.scrollLeft = Math.max(0, width(anchor) - offset)
+  updatePreview()
+}
+
+function zoomAnchor() {
+  const { usable } = timelineView()
+  const position = playheadPosition()
+  const start = deltaFor(scroll.scrollLeft)
+  const end = deltaFor(scroll.scrollLeft + usable)
+  if (position >= start && position <= end) {
+    // 播放头当前可见：缩放时保持它在屏幕上的位置，确保一直可见。
+    return { time: Math.round(position), offset: Math.max(0, width(position) - scroll.scrollLeft) }
+  }
+  // 播放头不在可视范围：按当前能看到的第一帧（最左侧时间）缩放。
+  return { time: start, offset: 0 }
+}
+
+function zoomBy(factor) {
+  const anchor = zoomAnchor()
+  setZoom(pixelsPerSecond * factor, anchor.time, anchor.offset)
+}
+
+function wheelZoomFactor(deltaY) {
+  return Math.min(1.5, Math.max(0.66, Math.exp(-deltaY * 0.0018)))
+}
+
+function renderZoomBar() {
+  const barWidth = zoomBar.clientWidth
+  if (!barWidth) return
+  const { usable, maxScroll } = timelineView()
+  const thumbWidth = fitZoom ? barWidth : Math.min(barWidth - 1, Math.max(24, Math.floor(usable / width(fitDuration()) * barWidth)))
+  const travel = barWidth - thumbWidth
+  const thumbLeft = maxScroll > 0 ? Math.round(travel * Math.min(1, scroll.scrollLeft / maxScroll)) : 0
+  zoomThumb.style.width = thumbWidth + 'px'
+  zoomThumb.style.transform = 'translateX(' + thumbLeft + 'px)'
+  zoomBar.setAttribute('aria-valuemin', '0')
+  zoomBar.setAttribute('aria-valuemax', String(Math.round(maxScroll)))
+  zoomBar.setAttribute('aria-valuenow', String(Math.round(Math.min(scroll.scrollLeft, maxScroll))))
+  zoomBar.setAttribute('aria-valuetext', printTime(deltaFor(scroll.scrollLeft), '.') + ' 起 · ' + Math.round(pixelsPerSecond) + ' 像素每秒')
+}
+
+let zoomDrag
+function startZoomDrag(event, kind, edge) {
+  const { usable, maxScroll } = timelineView()
+  zoomDrag = {
+    pointer: event.pointerId,
+    kind,
+    edge,
+    startX: event.clientX,
+    startScroll: scroll.scrollLeft,
+    startLeft: deltaFor(scroll.scrollLeft),
+    startSpan: usable * 1000 / pixelsPerSecond,
+    barWidth: zoomBar.clientWidth,
+    travel: zoomBar.clientWidth - zoomThumb.offsetWidth,
+    duration: fitDuration(),
+    usable,
+    maxScroll,
+    anchor: zoomAnchor(),
+  }
+  zoomBar.focus({ preventScroll: true })
+  zoomThumb.classList.add('dragging')
+  event.preventDefault()
+  event.stopPropagation()
+  event.currentTarget.setPointerCapture(event.pointerId)
+}
+
+zoomThumb.addEventListener('pointerdown', event => {
+  if (event.button !== 0 || event.target.closest('.zoom-grip')) return
+  startZoomDrag(event, 'scroll')
+})
+for (const grip of zoomBar.querySelectorAll('.zoom-grip')) {
+  grip.addEventListener('pointerdown', event => {
+    if (event.button === 0) startZoomDrag(event, 'zoom', grip.dataset.edge)
+  })
+}
+
+function pointerZoomMove(event) {
+  if (!zoomDrag || event.pointerId !== zoomDrag.pointer) return
+  const dx = event.clientX - zoomDrag.startX
+  if (zoomDrag.kind === 'scroll') {
+    if (zoomDrag.travel > 0) scroll.scrollLeft = zoomDrag.startScroll + dx * zoomDrag.maxScroll / zoomDrag.travel
+    return
+  }
+  const { startSpan, startLeft, duration, barWidth, usable, edge } = zoomDrag
+  const change = dx * duration / barWidth * (edge === 'left' ? -1 : 1)
+  const minSpan = usable * 1000 / zoomBounds(usable).max
+  const span = Math.max(minSpan, Math.min(duration, startSpan + change))
+  setZoom(usable * 1000 / span, zoomDrag.anchor.time, zoomDrag.anchor.offset)
+}
+
+function endZoomDrag(event) {
+  if (!zoomDrag || (event && event.pointerId !== zoomDrag.pointer)) return
+  zoomDrag = undefined
+  zoomThumb.classList.remove('dragging')
+}
+
+window.addEventListener('pointermove', pointerZoomMove)
+window.addEventListener('pointerup', endZoomDrag)
+window.addEventListener('pointercancel', endZoomDrag)
+window.addEventListener('blur', () => endZoomDrag())
+
+zoomBar.addEventListener('pointerdown', event => {
+  if (event.button !== 0 || event.target === zoomThumb || zoomThumb.contains(event.target)) return
+  const rect = zoomBar.getBoundingClientRect()
+  const span = timelineView().usable * 1000 / pixelsPerSecond
+  const fraction = (event.clientX - rect.left) / rect.width
+  scroll.scrollLeft = Math.max(0, width(fraction * fitDuration() - span / 2))
+})
+
+zoomBar.addEventListener('keydown', event => {
+  const { usable, maxScroll } = timelineView()
+  const span = usable * 1000 / pixelsPerSecond
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    event.preventDefault()
+    const step = width(span * (event.shiftKey ? 1 : 0.1))
+    scroll.scrollLeft = Math.max(0, Math.min(maxScroll, scroll.scrollLeft + (event.key === 'ArrowRight' ? step : -step)))
+  } else if (event.key === '+' || event.key === '=' || event.key === '-' || event.key === '_') {
+    event.preventDefault()
+    const factor = event.key === '-' || event.key === '_' ? 1 / 1.25 : 1.25
+    zoomBy(factor)
+  } else if (event.key === 'Home' || event.key === 'End') {
+    event.preventDefault()
+    scroll.scrollLeft = event.key === 'Home' ? 0 : maxScroll
+  }
+})
+
+scroll.addEventListener('wheel', event => {
+  const zooming = event.ctrlKey ||
+    (!event.shiftKey && Math.abs(event.deltaY) > Math.abs(event.deltaX) && event.deltaY !== 0)
+  if (zooming) {
+    event.preventDefault()
+    zoomBy(wheelZoomFactor(event.deltaY))
+    return
+  }
+  const horizontal = event.shiftKey ? event.deltaY : event.deltaX
+  if (!horizontal) return
+  event.preventDefault()
+  scroll.scrollLeft += horizontal
+}, { passive: false })
+
+zoomBar.addEventListener('wheel', event => {
+  const zooming = !event.shiftKey && Math.abs(event.deltaY) > Math.abs(event.deltaX)
+  if (zooming) {
+    event.preventDefault()
+    zoomBy(wheelZoomFactor(event.deltaY))
+    return
+  }
+  const { maxScroll } = timelineView()
+  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+  if (!delta) return
+  event.preventDefault()
+  scroll.scrollLeft = Math.max(0, Math.min(maxScroll, scroll.scrollLeft + delta * (event.shiftKey ? 3 : 1)))
+}, { passive: false })
+
+new ResizeObserver(renderViewport).observe(scroll)
+new ResizeObserver(renderZoomBar).observe(zoomBar)
+new ResizeObserver(fitPicture).observe(stage)
+
+function connectDivider(id, horizontal) {
+  const divider = $(id)
+  const parent = divider.parentElement
+  const property = horizontal ? '--timeline-height' : '--inspector-width'
+  const limit = horizontal ? 190 : 255
+  function apply(pixels, total) {
+    parent.style.setProperty(property, Math.max(limit, Math.min(total * .62, pixels)) + 'px')
+  }
+  const handle = divider.querySelector('.divider-handle')
+  handle.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    divider.focus({ preventScroll: true })
+    handle.setPointerCapture(event.pointerId)
+  })
+  handle.addEventListener('pointermove', event => {
+    if (!handle.hasPointerCapture(event.pointerId)) return
+    const box = parent.getBoundingClientRect()
+    if (horizontal) apply(box.bottom - event.clientY, box.height)
+    else apply(box.right - event.clientX, box.width)
+  })
+  divider.addEventListener('keydown', event => {
+    const backwards = horizontal ? 'ArrowUp' : 'ArrowLeft'
+    const forwards = horizontal ? 'ArrowDown' : 'ArrowRight'
+    if (event.key !== backwards && event.key !== forwards) return
+    event.preventDefault()
+    const box = parent.getBoundingClientRect()
+    const panel = divider.nextElementSibling.getBoundingClientRect()
+    const size = horizontal ? panel.height : panel.width
+    apply(size + (event.key === backwards ? 16 : -16), horizontal ? box.height : box.width)
+  })
+}
+connectDivider('horizontal-divider', true)
+connectDivider('vertical-divider', false)
+$('play').disabled = true
+ensureSelection()
+render()
+
+bindComposition({ project: () => project, currentTrack: track, hasDraft: hasPendingForm, report: status })

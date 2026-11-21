@@ -1,0 +1,47 @@
+name: Desktop build
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      make_installers:
+        description: Build installers and smoke-test the Windows installer
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+          - runner: windows-2025
+            platform: win32
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:desktop
+      - if: github.event_name == 'workflow_dispatch' && inputs.make_installers
+        run: npm run make -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - if: github.event_name == 'workflow_dispatch' && inputs.make_installers && runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/desktop-smoke/windows-installer.ps1
+      - if: github.event_name == 'workflow_dispatch' && inputs.make_installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: subx-${{ matrix.platform }}-${{ matrix.arch }}
+          path: out/make/
+          if-no-files-found: error

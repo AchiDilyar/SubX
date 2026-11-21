@@ -1,0 +1,33 @@
+{
+  "name": "subx",
+  "productName": "SubX",
+  "version": "0.1.0",
+  "description": "Desktop editor for SRT and ASS subtitles",
+  "private": true,
+  "main": "src/main/main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "test:desktop": "node scripts/desktop-smoke/run.mjs",
+    "test:preview": "node scripts/desktop-smoke/run.mjs --preview"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "8.0.1",
+    "@electron-forge/maker-dmg": "8.0.1",
+    "@electron-forge/maker-squirrel": "8.0.1",
+    "electron": "45.4.1"
+  },
+  "dependencies": {
+    "@jellyfin/libass-wasm": "4.2.4",
+    "electron-squirrel-startup": "1.0.1"
+  },
+  "author": "SubX contributors",
+  "config": {
+    "forge": "./forge.config.cjs"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}
