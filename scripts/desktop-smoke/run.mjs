@@ -25,7 +25,8 @@ try {
   const result = spawnSync(process.execPath, [require.resolve('electron/cli.js'), '--app=' + directory], {
     env: { ...process.env, SUBX_SMOKE_DIRECTORY: directory, SUBX_PREVIEW_MEDIA: previewMedia },
     stdio: 'inherit',
-    timeout: 90000,
+    // The full media and desktop workflow can legitimately exceed 90 seconds.
+    timeout: 180000,
   })
   if (result.error) throw result.error
   process.exitCode = result.status ?? 1

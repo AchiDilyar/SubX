@@ -500,7 +500,7 @@ function updatePreview() {
   progress.disabled = !video.readyState || !mediaDuration
   progress.value = mediaDuration ? String(Math.max(0, Math.min(1000, time * 1000 / mediaDuration))) : '0'
   updatePlayhead()
-  if (!video.paused) revealTimelinePosition(playheadPosition())
+  if (!video.paused) revealTimelinePosition(playheadPosition(), true)
   const captions = []
   for (const row of rows) {
     if (!row.track.visible || assPreview.ready(row.track.ass ? row.track.id : 'plain-subtitles')) continue
@@ -610,6 +610,14 @@ function seekFrame(milliseconds, direction = 0) {
   else if (direction > 0) target = frameAt(milliseconds + tolerance)
   else if (target > 0 && milliseconds - frameTimes[target - 1] <= frameTimes[target] - milliseconds) target--
   seek(frameTimes[Math.max(0, Math.min(target, frameTimes.length - 1))], true)
+}
+
+// 方向键移动播放头：有帧索引时按帧，没有时按 0.1 秒；Shift 每次 1 秒。
+function nudgePlayhead(direction, shift) {
+  video.pause()
+  if (frameTimes?.length && !shift) seekFrame(playheadPosition(), direction)
+  else seekFrame(playheadPosition() + direction * (shift ? 1000 : 100))
+  revealTimelinePosition(time)
 }
 
 function timelineEnd() {
@@ -2673,7 +2681,7 @@ $('track-data').addEventListener('pointerdown', event => {
   event.preventDefault()
   const point = marqueePoint(event)
   marquee = { id: event.pointerId, ...point, clientX: event.clientX, clientY: event.clientY, selected, selectedCues: new Set(selectedCues), active: false }
-  event.currentTarget.setPointerCapture(event.pointerId)
+  event.target.closest('.track-lane').setPointerCapture(event.pointerId)
 })
 $('track-data').addEventListener('pointermove', updateMarquee)
 $('track-data').addEventListener('pointerup', endMarquee)
@@ -2683,20 +2691,17 @@ window.addEventListener('blur', () => { if (marquee) endMarquee({ pointerId: mar
 ruler.addEventListener('keydown', event => {
   if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return
   event.preventDefault()
-  video.pause()
-  const direction = event.key === 'ArrowLeft' ? -1 : 1
-  if (frameTimes?.length && !event.shiftKey) seekFrame(playheadPosition(), direction)
-  else seekFrame(playheadPosition() + direction * (event.shiftKey ? 1000 : 100))
-  revealTimelinePosition(time)
+  nudgePlayhead(event.key === 'ArrowLeft' ? -1 : 1, event.shiftKey)
 })
-function revealTimelinePosition(target) {
+function revealTimelinePosition(target, page = false) {
   const usable = Math.max(1, scroll.clientWidth - $('track-headings').offsetWidth)
   const position = width(target)
   const start = scroll.scrollLeft
   if (position < start) {
     scroll.scrollLeft = position - playheadMargin
   } else if (position + 1 > start + usable) {
-    scroll.scrollLeft = position - usable + playheadMargin
+    // 播放时整屏右移一格，让播放头回到左侧重新向右走，而不是贴住右边缘连续滚动。
+    scroll.scrollLeft = page ? position - playheadMargin : position - usable + playheadMargin
   }
 }
 window.addEventListener('pointermove', pointerMove)
@@ -2733,6 +2738,23 @@ window.addEventListener('keydown', event => {
     if (!event.repeat) $(event.shiftKey ? 'save-project-as' : 'save-project').click()
     return
   }
+  // 全局快捷键优先于刚点过的控件：空格播放/暂停，左右方向键移动播放头；文本框和菜单保留自己的键盘操作。
+  const field = event.target.closest?.('input, textarea, [contenteditable="true"]')
+  const typing = Boolean(field) && (field.tagName === 'TEXTAREA' || field.isContentEditable ||
+    !['checkbox', 'radio', 'range', 'button', 'submit', 'reset', 'color'].includes(field.type))
+  const localKeys = typing || Boolean(event.target.closest?.('[role="menu"], dialog'))
+  if (!localKeys && !event.defaultPrevented && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (event.code === 'Space') {
+      event.preventDefault()
+      if (!$('play').disabled && !event.repeat) $('play').click()
+      return
+    }
+    if (!drag && !marquee && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault()
+      nudgePlayhead(event.key === 'ArrowLeft' ? -1 : 1, event.shiftKey)
+      return
+    }
+  }
   if (event.target.closest?.('input,textarea,select,dialog')) return
   if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.target.closest?.('.timeline')) {
     const key = event.key.toLowerCase()
@@ -2757,10 +2779,6 @@ window.addEventListener('keydown', event => {
       !event.metaKey && !event.ctrlKey && !event.altKey && findCue(project, selected)) {
     event.preventDefault()
     deleteSelectedCue()
-  }
-  if (event.code === 'Space' && !event.target.closest?.('button')) {
-    event.preventDefault()
-    if (!$('play').disabled && !event.repeat) $('play').click()
   }
 })
 for (const eventName of ['input', 'change']) {

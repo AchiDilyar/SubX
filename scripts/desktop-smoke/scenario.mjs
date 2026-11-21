@@ -430,13 +430,13 @@ async function run() {
   await exec(`(() => {
     const divider = document.querySelector('#horizontal-divider')
     divider.focus()
-    divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
   })()`)
   await expect(`document.querySelector('.timeline').clientHeight === ${tallTimeline - 16}`, 'resize the timeline using the separator arrow key')
   await exec(`(() => {
     const divider = document.querySelector('#vertical-divider')
     divider.focus()
-    divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
   })()`)
   await expect(`document.querySelector('.inspector').clientWidth === ${wideInspector - 16}`, 'resize the inspector using the separator arrow key')
   await exec(`(() => {
@@ -538,7 +538,7 @@ async function run() {
   const lastTime = indexed ? '00:00:04.833' : '00:00:05.000'
   await expect(`document.querySelector('#timecode').value === "${lastTime}" && !document.querySelector('video').seeking`,
     'clamp clicks in the two-second tail to the last video position')
-  await exec(`document.querySelector('#ruler').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))`)
+  await exec(`document.querySelector('#ruler').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))`)
   await expect(`document.querySelector('#timecode').value === "${lastTime}"`, 'keep the playhead at the last frame when nudged right')
   await exec(`(() => {
     const track = document.querySelector('#timeline-scroll')
@@ -781,9 +781,65 @@ async function run() {
   await expect(`!document.querySelector("video").seeking && document.querySelector("#timecode").value === "${indexed ? '00:00:03.833' : '00:00:03.900'}"`, 'seek to the preceding video frame with ArrowLeft')
   assert(await exec(playheadInView), 'Reveal the keyboard playhead when it is behind the sticky track header')
   await exec(`(() => { const v = document.querySelector('video'); v.currentTime = 4; document.querySelector('#timeline-scroll').scrollLeft = 0; v.play() })()`)
-  await expect(playheadInView, 'follow an offscreen playhead during playback')
+  await expect(playheadInView, 'page an offscreen playhead into view during playback')
   await exec('document.querySelector("video").pause()')
+  // 播放中越过右边缘时整屏右移一格：播放头回到左侧重新向右走，而不是贴住右边缘连续滚动。
+  const pageSetup = await exec(`(() => {
+    const scroll = document.querySelector('#timeline-scroll')
+    const heads = document.querySelector('#track-headings')
+    const zoom = document.querySelector('#zoom')
+    zoom.value = zoom.max
+    zoom.dispatchEvent(new Event('input'))
+    scroll.scrollLeft = 0
+    const ruler = document.querySelector('#ruler').getBoundingClientRect()
+    const usable = scroll.clientWidth - heads.offsetWidth
+    return { usable, scale: Number(zoom.value), x: ruler.left + usable - 60, y: ruler.top + 7 }
+  })()`)
+  await mouse('mousePressed', pageSetup.x, pageSetup.y)
+  await mouse('mouseReleased', pageSetup.x, pageSetup.y)
+  await expect('!document.querySelector("video").seeking && document.querySelector("#timeline-scroll").scrollLeft === 0', 'hold the timeline at the left with the paused playhead near the right edge')
+  await exec('document.querySelector("#play").click()')
+  await expect('document.querySelector("#timeline-scroll").scrollLeft > 0', 'page the timeline once the playing playhead leaves the right edge')
+  const pageJump = await exec(`(() => {
+    const scroll = document.querySelector('#timeline-scroll')
+    const heads = document.querySelector('#track-headings')
+    const head = document.querySelector('#playhead').getBoundingClientRect()
+    return { scroll: scroll.scrollLeft, left: head.left - heads.getBoundingClientRect().right, time: document.querySelector('#timecode').value }
+  })()`)
+  assert(pageJump.scroll > pageSetup.usable * .4, 'Jump the timeline by about one window when the playing playhead leaves the right edge: ' + JSON.stringify({ pageSetup, pageJump }))
+  assert(pageJump.left < 120, 'Restart the playing playhead near the left edge after a page jump: ' + JSON.stringify({ pageSetup, pageJump }))
+  await delay(300)
+  const pageHold = await exec('document.querySelector("#timeline-scroll").scrollLeft')
+  assert(Math.abs(pageHold - pageJump.scroll) < 4, 'Hold the timeline still after a page jump until the playhead reaches the right edge again: ' + JSON.stringify({ pageJump, pageHold }))
+  await exec('document.querySelector("video").pause()')
+  await exec('document.querySelector("video").currentTime = 2')
   await exec('document.querySelector("#timeline-scroll").scrollLeft = 0')
+  // 点击过的控件不能吃掉全局快捷键：空格仍是播放/暂停，方向键仍是移动播放头。
+  const snapPoint = await exec(`(() => {
+    const box = document.querySelector('#snap-tool').getBoundingClientRect()
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  })()`)
+  await mouse('mousePressed', snapPoint.x, snapPoint.y)
+  await mouse('mouseReleased', snapPoint.x, snapPoint.y)
+  await expect('document.activeElement === document.querySelector("#snap-tool")', 'keep focus on a pointer-clicked toolbar button for this check')
+  const snapPressed = await exec('document.querySelector("#snap-tool").getAttribute("aria-pressed")')
+  const pressShortcut = async (key, code, windowsVirtualKeyCode) => {
+    await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code, windowsVirtualKeyCode })
+    await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode })
+  }
+  await pressShortcut(' ', 'Space', 32)
+  await delay(300)
+  assert(await exec('!document.querySelector("video").paused'), 'Play with Space while a toolbar button has focus')
+  assert.equal(await exec('document.querySelector("#snap-tool").getAttribute("aria-pressed")'), snapPressed, 'Keep the focused toolbar button unchanged when Space plays')
+  await exec('document.querySelector("video").pause()')
+  await delay(150)
+  const arrowTime = await exec('document.querySelector("#timecode").value')
+  await pressShortcut('ArrowRight', 'ArrowRight', 39)
+  await delay(200)
+  assert.notEqual(await exec('document.querySelector("#timecode").value'), arrowTime, 'Nudge the playhead with ArrowRight while a toolbar button has focus')
+  assert.equal(await exec('document.querySelector("#snap-tool").getAttribute("aria-pressed")'), snapPressed, 'Keep the focused toolbar button unchanged when arrows nudge the playhead')
+  await click('snap-tool')
+  await exec('(() => { document.activeElement?.blur(); document.querySelector("video").currentTime = 2; document.querySelector("#timeline-scroll").scrollLeft = 0 })()')
   const edgeDrag = await exec(`(() => { const r = document.querySelector('#timeline-scroll').getBoundingClientRect(); const ruler = document.querySelector('#ruler').getBoundingClientRect(); return { left: document.querySelector('#track-headings').getBoundingClientRect().right, right: r.right, y: ruler.top + 7 } })()`)
   await mouse('mousePressed', edgeDrag.right - 80, edgeDrag.y)
   await mouse('mouseMoved', edgeDrag.right + 30, edgeDrag.y)
@@ -1504,7 +1560,7 @@ async function run() {
   await exec(`(() => {
     const ruler = document.querySelector('#ruler')
     for (const shiftKey of [true, false, false]) {
-      ruler.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey, bubbles: true }))
+      ruler.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey, bubbles: true, cancelable: true }))
     }
   })()`)
   await expect('document.querySelector("#timecode").value === "00:00:01.200"', 'set the playhead as a snap target')
@@ -1596,7 +1652,7 @@ async function run() {
   await exec(`(() => {
     const handle = document.querySelector('#heading-resizer')
     handle.focus()
-    handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
   })()`)
   await expect(`document.querySelector('#track-headings').offsetWidth === ${narrowHeading + 8}`, 'widen the track header area from the keyboard')
   await exec('document.querySelector(".track-heading:last-child .lock-button").click()')
