@@ -237,6 +237,7 @@ async function run() {
   })()`)
   assert(previewControls.grouped, 'Group the timecode, play, quality and fullscreen controls inside the preview panel')
   assert(previewControls.playCentered && previewControls.timecodeFirst, 'Center the play button with the timecode on the left')
+  assert(await exec('getComputedStyle(document.querySelector("#quality")).backgroundImage.includes("svg")'), 'Keep the quality select arrow visible')
   await click('fullscreen-preview')
   await expect('document.querySelector(".monitor").classList.contains("preview-maximized") && document.querySelector("#fullscreen-preview").getAttribute("aria-pressed") === "true"', 'maximize the video preview from the new control bar')
   await click('fullscreen-preview')
@@ -535,7 +536,7 @@ async function run() {
   })()`)
   await mouse('mousePressed', tailPoint.x, tailPoint.y)
   await mouse('mouseReleased', tailPoint.x, tailPoint.y)
-  const lastTime = indexed ? '00:00:04.833' : '00:00:05.000'
+  const lastTime = indexed ? '00:00:04.05' : '00:00:05.000'
   await expect(`document.querySelector('#timecode').value === "${lastTime}" && !document.querySelector('video').seeking`,
     'clamp clicks in the two-second tail to the last video position')
   await exec(`document.querySelector('#ruler').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))`)
@@ -563,7 +564,7 @@ async function run() {
     })()`)
     await mouse('mousePressed', betweenFrames.x, betweenFrames.y)
     await mouse('mouseReleased', betweenFrames.x, betweenFrames.y)
-    await expect('document.querySelector("#timecode").value === "00:00:00.167"', 'snap a click between frames to the nearest video frame')
+    await expect('document.querySelector("#timecode").value === "00:00:00.01"', 'snap a click between frames to the nearest video frame')
     const rulerScheme = await exec(`(() => ({
       labels: [...document.querySelectorAll('#ruler .tick-label')].map(node => node.textContent),
       grid: getComputedStyle(document.querySelector('.track-lane')).backgroundImage,
@@ -682,18 +683,18 @@ async function run() {
     video.currentTime = 3.9
   })()`)
   await holdFrame()
-  await expect(`!document.querySelector('video').seeking && typeof document.querySelector('video').releaseHeldFrame === 'function' && document.querySelector('#timecode').value === '00:00:03.900'`, 'await the seek clock and hold the decoded frame')
+  await expect(`!document.querySelector('video').seeking && typeof document.querySelector('video').releaseHeldFrame === 'function' && document.querySelector('#timecode').value === '00:00:03.05'`, 'await the seek clock and hold the decoded frame')
   assert.equal(await exec('Boolean(document.querySelector(".caption"))'), indexed, 'Use the target time while the frame callback is held')
   const frameTime = await exec('document.querySelector("video").releaseHeldFrame()')
   assert(frameTime >= 3.8 && frameTime < 3.86, 'Use a frame timestamp inside the short cue')
-  assert.equal(await exec('document.querySelector("#timecode").value'), '00:00:03.900', 'A late frame must not replace the precise playhead time')
+  assert.equal(await exec('document.querySelector("#timecode").value'), '00:00:03.05', 'A late frame must not replace the precise playhead time')
   assert.equal(await exec('document.querySelector(".caption")?.textContent'), '帧预览检查', 'Preview the subtitle at the displayed frame timestamp')
   await exec('document.querySelector("video").currentTime = 2')
-  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.000"', 'reset before testing a superseded seek')
+  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.00"', 'reset before testing a superseded seek')
   await holdFrame()
   await expect('typeof document.querySelector("video").releaseHeldFrame === "function"', 'hold a frame from the earlier seek')
   await exec('document.querySelector("video").currentTime = 2')
-  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.000"', 'settle the newer seek before releasing the old frame')
+  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.00"', 'settle the newer seek before releasing the old frame')
   await exec('document.querySelector("video").releaseHeldFrame()')
   assert.equal(await exec('Boolean(document.querySelector(".caption"))'), false, 'Ignore a frame captured before the most recent seek')
   await click('undo')
@@ -722,7 +723,7 @@ async function run() {
     document.querySelector('#timeline-scroll').scrollLeft = 0
     document.querySelector('video').currentTime = 2
   })()`)
-  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.000"', 'position the playhead for the zoom anchoring checks')
+  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.00"', 'position the playhead for the zoom anchoring checks')
   await delay(150)
   const playheadBefore = await exec(`(() => {
     const head = document.querySelector('#playhead').getBoundingClientRect()
@@ -751,7 +752,7 @@ async function run() {
   })()`)
   await delay(200)
   await exec('document.querySelector("video").currentTime = 4')
-  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:04.000"', 'move the playhead outside the zoomed-in viewport')
+  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:04.00"', 'move the playhead outside the zoomed-in viewport')
   await delay(150)
   const offscreenZoom = await exec(`(() => {
     const scroll = document.querySelector('#timeline-scroll')
@@ -779,7 +780,7 @@ async function run() {
   }
   await nudgeRuler('ArrowRight', 8)
   await nudgeRuler('ArrowRight', 8)
-  await expect('document.querySelector("video").currentTime === 4 && !document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:04.000"', 'seek one second per Shift+Arrow key')
+  await expect('document.querySelector("video").currentTime === 4 && !document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:04.00"', 'seek one second per Shift+Arrow key')
   const playheadInView = `(() => {
     const head = document.querySelector('#playhead').getBoundingClientRect()
     const left = document.querySelector('#track-headings').getBoundingClientRect().right
@@ -789,7 +790,7 @@ async function run() {
   assert(await exec(playheadInView), 'Reveal the keyboard playhead after moving past the right edge')
   await exec('document.querySelector("#timeline-scroll").scrollLeft = 10000')
   await nudgeRuler('ArrowLeft', 0)
-  await expect(`!document.querySelector("video").seeking && document.querySelector("#timecode").value === "${indexed ? '00:00:03.833' : '00:00:03.900'}"`, 'seek to the preceding video frame with ArrowLeft')
+  await expect(`!document.querySelector("video").seeking && document.querySelector("#timecode").value === "${indexed ? '00:00:03.05' : '00:00:03.900'}"`, 'seek to the preceding video frame with ArrowLeft')
   assert(await exec(playheadInView), 'Reveal the keyboard playhead when it is behind the sticky track header')
   await exec(`(() => { const v = document.querySelector('video'); v.currentTime = 4; document.querySelector('#timeline-scroll').scrollLeft = 0; v.play() })()`)
   await expect(playheadInView, 'page an offscreen playhead into view during playback')
@@ -879,6 +880,25 @@ async function run() {
   assert(await exec(`Number(document.querySelector("#zoom").value) < ${zoomBefore}`), 'Zoom out by dragging the scrollbar grip')
   await exec('document.querySelector("#timeline-scroll").scrollLeft = 0')
   await expect('document.querySelector("#zoom-thumb").getBoundingClientRect().x <= 210', 'settle the scrollbar thumb after resetting the scroll')
+  // 缩放条被点过之后，方向键仍然移动播放头，不再平移时间轴。
+  const zoomFocusPoint = await exec(`(() => {
+    const bar = document.querySelector('#timeline-zoom').getBoundingClientRect()
+    return { x: bar.left + bar.width * .35, y: bar.top + bar.height / 2 }
+  })()`)
+  await mouse('mousePressed', zoomFocusPoint.x, zoomFocusPoint.y)
+  await mouse('mouseReleased', zoomFocusPoint.x, zoomFocusPoint.y)
+  await exec(`(() => {
+    const scroll = document.querySelector('#timeline-scroll')
+    const heads = document.querySelector('#track-headings').offsetWidth
+    const usable = scroll.clientWidth - heads
+    scroll.scrollLeft = Math.max(0, document.querySelector('#playhead').offsetLeft - usable / 2)
+  })()`)
+  const zoomFocus = await exec(`({ scroll: document.querySelector('#timeline-scroll').scrollLeft, time: document.querySelector('#timecode').value })`)
+  await pressShortcut('ArrowRight', 'ArrowRight', 39)
+  await delay(200)
+  const zoomArrow = await exec(`({ scroll: document.querySelector('#timeline-scroll').scrollLeft, time: document.querySelector('#timecode').value })`)
+  assert.notEqual(zoomArrow.time, zoomFocus.time, 'Move the playhead with the arrow keys after clicking the zoom bar')
+  assert.equal(zoomArrow.scroll, zoomFocus.scroll, 'Keep the timeline scroll unchanged when arrows move the playhead')
   const thumb = await exec(`(() => {
     const box = document.querySelector('#zoom-thumb').getBoundingClientRect()
     return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
@@ -894,7 +914,7 @@ async function run() {
     zoom.dispatchEvent(new Event('input'))
     document.querySelector('video').currentTime = 2
   })()`)
-  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.000"', 'restore the timeline after keyboard seeking')
+  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.00"', 'restore the timeline after keyboard seeking')
   await exec('for (const value of ["2", "4", "1"]) { const q = document.querySelector("#quality"); q.value = value; q.dispatchEvent(new Event("change")); const c = document.querySelector("canvas"); if (value === "1" ? !c.hidden : c.width !== 3840 / +value || c.height !== 2160 / +value) throw Error("quality width"); }')
   console.log('PASS switch 4K preview targets 3840x2160, 1920x1080, 960x540')
   await writeFile(join(directory, 'broken-encoding.srt'), Buffer.from([0xff, 0xfe, 0x31]))
@@ -954,7 +974,7 @@ async function run() {
   await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
   await expect('!document.querySelector("#open-project").disabled && !document.querySelector("#split-dialog").open && document.querySelectorAll(".track-lane").length === 1 && document.querySelector(".cue").textContent.startsWith("你好")', 'cancel split without changing the active track')
   await exec('document.querySelector("video").currentTime = 2.1')
-  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.100" && document.querySelectorAll(".caption").length === 1', 'hold a frame inside the original bilingual cue')
+  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.01" && document.querySelectorAll(".caption").length === 1', 'hold a frame inside the original bilingual cue')
   await click('split-track')
   await exec(`(() => {
     const order = document.querySelector('#split-order')
@@ -972,7 +992,7 @@ async function run() {
   await expect('!document.querySelector("#open-project").disabled && !document.querySelector("#split-dialog").open && document.querySelectorAll(".track-lane").length === 2', 'keep the current tracks when no pair is eligible')
   await click('link-tool')
   await click('next-review')
-  await expect(`document.querySelector('#cue-text').value === '单行' && document.querySelector('#timecode').value === '00:00:02.750' && document.querySelector('#select-tool').getAttribute('aria-pressed') === 'true'`, 'locate the retained single line without starting a link')
+  await expect(`document.querySelector('#cue-text').value === '单行' && document.querySelector('#timecode').value === '00:00:02.05' && document.querySelector('#select-tool').getAttribute('aria-pressed') === 'true'`, 'locate the retained single line without starting a link')
   await exec('document.querySelector("video").currentTime = 2.9')
   await expect(`!document.querySelector('video').seeking && Array.from(document.querySelectorAll('.caption')).some(node => node.textContent === '单行')`, 'hold a frame inside the selected cue')
   await exec(`(() => {
@@ -1003,7 +1023,7 @@ async function run() {
     document.querySelector('#timeline-scroll').scrollLeft = 0
     document.querySelector('video').currentTime = 2
   })()`)
-  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.000" && document.querySelector("#timeline-scroll").scrollLeft === 0 && document.querySelectorAll(".caption").length === 2', 'restore the position after navigating review items')
+  await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.00" && document.querySelector("#timeline-scroll").scrollLeft === 0 && document.querySelectorAll(".caption").length === 2', 'restore the position after navigating review items')
   const marqueeArea = await exec(`(() => { const lanes = [...document.querySelectorAll('.track-lane')]; const a = lanes[0].getBoundingClientRect(); const b = lanes.at(-1).getBoundingClientRect(); const left = document.querySelector('#track-headings').getBoundingClientRect().right; return { x: left + 3, y: a.top + 3, right: Math.min(document.querySelector('#timeline-scroll').getBoundingClientRect().right - 5, left + 500), bottom: b.bottom - 3 } })()`)
   await mouse('mousePressed', marqueeArea.x, marqueeArea.y)
   await mouse('mouseMoved', marqueeArea.right, marqueeArea.bottom)
@@ -1571,6 +1591,27 @@ async function run() {
 
   await click('blank-video')
   await expect('document.querySelector("#blank-video-dialog").open', 'open the blank video dialog')
+  const blankOptions = await exec(`(() => {
+    const form = document.querySelector('#blank-video-form')
+    const picker = form.querySelector('[data-picker] .picker-button')
+    const swatch = form.elements.color.getBoundingClientRect()
+    return {
+      resolutions: form.elements.resolution.options.length,
+      portrait: [...form.elements.resolution.options].filter(option => option.value === '1080x1920').length,
+      fps: [...form.elements.fps.options].map(option => option.value),
+      picker: picker.textContent,
+      swatch: swatch.width,
+    }
+  })()`)
+  assert.equal(blankOptions.resolutions, 45, 'Offer landscape and portrait resolutions across common ratios: ' + JSON.stringify(blankOptions))
+  assert.equal(blankOptions.portrait, 1, 'Include the portrait 16:9 resolution')
+  assert(blankOptions.fps.includes('23.976') && blankOptions.fps.includes('120'), 'Offer modern frame rates')
+  assert(blankOptions.picker.includes('1920 × 1080'), 'Show the default resolution in the picker')
+  assert(blankOptions.swatch < 80, 'Keep the color picker a small swatch')
+  await exec('document.querySelector("#blank-video-form .picker-button").click()')
+  await expect('!document.querySelector("#blank-video-form .picker-list").hidden', 'open the resolution picker')
+  await exec(`document.querySelector('#blank-video-form .picker-list button[data-value="1280x720"]').click()`)
+  await expect('document.querySelector("#blank-video-form").elements.resolution.value === "1280x720" && document.querySelector("#blank-video-form .picker-button").textContent.includes("1280 × 720")', 'choose a resolution from the picker')
   await exec(`(() => {
     const form = document.querySelector('#blank-video-form')
     form.elements.color.value = '#101820'
@@ -1587,20 +1628,23 @@ async function run() {
     const area = document.querySelector('#timeline-scroll').getBoundingClientRect()
     const heads = document.querySelector('#track-headings').getBoundingClientRect().right
     const ruler = document.querySelector('#ruler').getBoundingClientRect()
-    return { x: heads + (area.right - heads) * 0.61, y: ruler.top + 7 }
+    const x = heads + (area.right - heads) * 0.61
+    const scale = Number(document.querySelector('#zoom').value)
+    return { x, y: ruler.top + 7, frame: Math.round((x - ruler.left) * 1000 / scale / 40) }
   })()`)
   await mouse('mousePressed', frameRuler.x, frameRuler.y)
   await mouse('mouseReleased', frameRuler.x, frameRuler.y)
   await expect(`(() => {
-    const ms = Math.round(Number(document.querySelector('#timecode').value.split(':')[2]) * 1000)
-    return ms > 0 && ms % 40 === 0
+    const [hours, minutes, rest] = document.querySelector('#timecode').value.split(':')
+    const [seconds, frames] = rest.split('.')
+    return Math.abs(((Number(hours) * 60 + Number(minutes)) * 60 + Number(seconds)) * 25 + Number(frames) - ${frameRuler.frame}) <= 1
   })()`, 'land the playhead on a video frame boundary')
   await exec('document.querySelector("#play").click()')
   await delay(500)
   await exec('document.querySelector("#play").click()')
   const blankTime = await exec('document.querySelector("#timecode").value')
-  assert.notEqual(blankTime, '00:00:00.000', 'Advance the playhead while the blank video plays')
-  assert.equal(Math.round(Number(blankTime.split(':')[2]) * 1000) % 40, 0, 'Land the paused playhead on a frame boundary: ' + blankTime)
+  assert(/^\d{2}:\d{2}:\d{2}\.\d{2}$/.test(blankTime), 'Show the blank video timecode in frames: ' + blankTime)
+  assert.notEqual(blankTime, '00:00:00.00', 'Advance the playhead while the blank video plays')
 
   await click('compose-video')
   await expect(`document.querySelector('#composition-dialog').open &&
@@ -1803,6 +1847,16 @@ async function run() {
   await exec('document.querySelector(".track-heading:last-child .lock-button").click()')
   await expect('document.querySelector(".track-heading:last-child .lock-button").getAttribute("aria-pressed") === "true" && document.querySelector(".track-lane:last-child").classList.contains("locked-track") && document.querySelector(".track-lane:last-child .cue.locked") && document.querySelector("#export-subtitles").disabled', 'lock a track and disable its cues and exports')
   assert(await exec(`getComputedStyle(document.querySelector('.track-lane:last-child'), '::after').backgroundImage.includes('repeating-linear-gradient')`), 'Stripe a locked track')
+  assert(await exec('document.querySelector(".track-heading:last-child .visibility-button").disabled'), 'Disable the visibility toggle while a track is locked')
+  const lockedName = await exec(`(() => {
+    const box = document.querySelector('.track-heading:last-child .track-name').getBoundingClientRect()
+    return { x: box.left + 8, y: box.top + box.height / 2 }
+  })()`)
+  for (const count of [1, 2]) {
+    await mouse('mousePressed', lockedName.x, lockedName.y, count)
+    await mouse('mouseReleased', lockedName.x, lockedName.y, count)
+  }
+  await expect('!document.querySelector(".track-name-input") && document.querySelector("#status").textContent.includes("已锁定")', 'Ignore renaming a locked track')
   const lockedCue = await exec(`(() => {
     const box = document.querySelector('.track-lane:last-child .cue').getBoundingClientRect()
     return { x: box.left + box.width / 2, y: box.top + 10 }
@@ -1848,11 +1902,35 @@ async function run() {
   await click('undo')
   assert.equal(await timesOf(topCue), '00:00:02.000 – 00:00:04.000')
   assert.equal(await timesOf(extraCue), '00:00:04.000 – 00:00:04.800')
+  const emptyClick = await exec(`(() => {
+    const area = document.querySelector('#timeline-scroll').getBoundingClientRect()
+    const lanes = document.querySelector('#track-lanes').getBoundingClientRect()
+    return { x: area.left + 220, y: Math.min(lanes.bottom + 12, area.bottom - 8) }
+  })()`)
+  await mouse('mousePressed', emptyClick.x, emptyClick.y)
+  await mouse('mouseReleased', emptyClick.x, emptyClick.y)
+  await expect('document.querySelectorAll(".cue.selected").length === 0', 'deselect subtitles by clicking an empty timeline area')
+  const renamePoint = await exec(`(() => {
+    const box = document.querySelector('.track-heading:first-child .track-name').getBoundingClientRect()
+    return { x: box.left + 8, y: box.top + box.height / 2 }
+  })()`)
+  for (const count of [1, 2]) {
+    await mouse('mousePressed', renamePoint.x, renamePoint.y, count)
+    await mouse('mouseReleased', renamePoint.x, renamePoint.y, count)
+  }
+  await expect('document.activeElement?.classList.contains("track-name-input")', 'start renaming a track by double-clicking its name')
+  await exec(`(() => {
+    const input = document.activeElement
+    input.value = '中文轨'
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  })()`)
+  await expect('document.querySelector(".track-heading:first-child .track-name").textContent === "中文轨"', 'rename a track')
   await click('save-project')
   await expect('document.querySelector("#status").textContent === "已保存工程"', 'save the independent SRT project')
   const alignment = JSON.parse(await readFile(join(directory, 'alignment.subx'), 'utf8'))
   assert.deepEqual(alignment.links, [])
   assert.equal(alignment.tracks[1].cues[0].start, 1700)
+  assert.equal(alignment.tracks[0].label, '中文轨', 'Persist the renamed track')
 
   const unexpectedClose = () => fail(new Error('The window closed before resolving unsaved edits'))
   window.once('closed', unexpectedClose)

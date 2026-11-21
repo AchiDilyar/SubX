@@ -108,6 +108,11 @@ function rulerSteps() {
 function rulerMinor() {
   return rulerSteps().minor
 }
+// 预览时间码：有帧率时显示「时:分:秒.帧」，没有帧率时退回毫秒。
+function printTimecode(milliseconds) {
+  const fps = rulerFps()
+  return fps ? rulerLabel(Math.max(0, milliseconds), fps, 1000) : printTime(Math.max(0, milliseconds), '.')
+}
 function rulerLabel(milliseconds, fps, major) {
   if (!fps) {
     const text = printTime(Math.round(milliseconds), '.')
@@ -573,7 +578,7 @@ function renderPlayingCue() {
 function updatePreview() {
   const captionTime = presentedFrameTime ?? time
   assPreview.draw(captionTime, drag)
-  $('timecode').value = printTime(Math.max(0, time), '.')
+  $('timecode').value = printTimecode(time)
   const progress = $('preview-progress')
   progress.disabled = !hasPicture() || !mediaDuration
   progress.value = mediaDuration ? String(Math.max(0, Math.min(1000, time * 1000 / mediaDuration))) : '0'
@@ -582,7 +587,9 @@ function updatePreview() {
   if (!playbackPaused()) revealTimelinePosition(playheadPosition(), true)
   const captions = []
   for (const row of rows) {
-    if (!row.track.visible || assPreview.ready(row.track.ass ? row.track.id : 'plain-subtitles')) continue
+    if (!row.track.visible) continue
+    const layerId = row.track.ass ? row.track.id : 'plain-subtitles'
+    if (assPreview.ready(layerId) || assPreview.pending(layerId)) continue
     for (const cue of row.ordered) {
       if (cue.start > captionTime + (drag ? Math.abs(drag.delta) : 0)) break
       const { start, end } = cueTiming(cue, drag)
@@ -888,7 +895,7 @@ function render() {
     heading.style.setProperty('--track-height', row.height + 'px')
     heading.classList.toggle('locked', locked)
     const label = trackLabel(track)
-    const name = element('span', 'track-name', label)
+    const name = element('span', 'track-name', track.label || label)
     name.tabIndex = 0
     name.setAttribute('role', 'button')
     name.title = track.ass?.sourceName ?? track.name
@@ -897,11 +904,20 @@ function render() {
       event.preventDefault()
       chooseTrack(track)
     })
+    name.addEventListener('dblclick', event => {
+      event.preventDefault()
+      event.stopPropagation()
+      beginTrackRename(track, name)
+    })
     const visibility = element('button', 'visibility-button')
     visibility.append(icon(track.visible ? 'eye' : 'eye-off'))
-    visibility.title = track.visible ? '隐藏轨道' : '显示轨道'
+    visibility.title = locked ? '轨道已锁定' : track.visible ? '隐藏轨道' : '显示轨道'
     visibility.setAttribute('aria-label', visibility.title + ' ' + label)
-    visibility.addEventListener('click', () => edit(() => { track.visible = !track.visible }))
+    visibility.disabled = locked
+    visibility.addEventListener('click', () => {
+      if (track.locked) return
+      edit(() => { track.visible = !track.visible })
+    })
     const lock = element('button', 'lock-button')
     lock.append(icon(locked ? 'lock' : 'unlock'))
     lock.title = locked ? '解锁轨道' : '锁定轨道'
@@ -1103,7 +1119,50 @@ function renderViewport() {
   }
 }
 
+function beginTrackRename(owner, node) {
+  if (owner.locked) {
+    status('轨道已锁定，解锁后可重命名')
+    return
+  }
+  if (node.querySelector('input')) return
+  const input = element('input', 'track-name-input')
+  input.type = 'text'
+  input.value = owner.label || trackLabel(owner)
+  input.maxLength = 40
+  input.setAttribute('aria-label', '轨道名称')
+  node.textContent = ''
+  node.append(input)
+  input.focus()
+  input.select()
+  let settled = false
+  const finish = commit => {
+    if (settled) return
+    settled = true
+    const value = input.value.trim()
+    if (commit && value && value !== (owner.label || trackLabel(owner))) edit(() => { owner.label = value })
+    else render()
+  }
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      event.stopPropagation()
+      finish(true)
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      finish(false)
+    }
+  })
+  input.addEventListener('blur', () => finish(true))
+  input.addEventListener('click', event => event.stopPropagation())
+  input.addEventListener('dblclick', event => event.stopPropagation())
+}
+
 function chooseTrack(owner) {
+  if (owner.locked) {
+    status('轨道已锁定，解锁后可操作')
+    return
+  }
   if (currentTrack === owner.id) return
   currentTrack = owner.id
   selectedCues.clear()
@@ -1251,7 +1310,7 @@ function pointerMove(event) {
   const lane = !drag.edge && (!drag.group || drag.targets.every(target => target.row.track === drag.source)) && Math.abs(event.clientY - drag.startY) > 4 &&
     event.clientY >= zone.top && event.clientY < zone.bottom &&
     document.elementsFromPoint(event.clientX, event.clientY).find(node => node.classList.contains('track-lane'))
-  const destination = lane && rows.find(row => row.lane === lane && row.track !== drag.source) || undefined
+  const destination = lane && rows.find(row => row.lane === lane && row.track !== drag.source && !row.track.locked) || undefined
   if (delta === drag.delta && snap?.time === drag.snapTime && destination === drag.destination) return
   drag.destination = destination
   drag.delta = delta
@@ -1819,10 +1878,105 @@ action('open-media', () => withProjectOperation(async () => {
   status('已打开视频')
 }))
 
+// —— 空白视频选项 ——
+const blankRatios = [['16:9', 16, 9], ['4:3', 4, 3], ['3:2', 3, 2], ['1:1', 1, 1], ['21:9', 21, 9]]
+const blankHeights = [480, 720, 1080, 1440, 2160]
+const blankFps = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60, 120]
+const evenSize = value => Math.round(value / 2) * 2
+function fillBlankVideoOptions() {
+  const form = $('blank-video-form')
+  const resolution = form.elements.resolution
+  resolution.replaceChildren()
+  for (const [ratio, ratioWidth, ratioHeight] of blankRatios) {
+    for (const orientation of ['横屏', '竖屏']) {
+      if (ratio === '1:1' && orientation === '竖屏') continue
+      const group = element('optgroup')
+      group.label = ratio + ' · ' + orientation
+      for (const height of blankHeights) {
+        const long = evenSize(height * ratioWidth / ratioHeight)
+        const width = orientation === '横屏' ? long : height
+        const tall = orientation === '横屏' ? height : long
+        group.append(new Option(width + ' × ' + tall + ' · ' + height + 'p', width + 'x' + tall))
+      }
+      resolution.append(group)
+    }
+  }
+  form.elements.fps.replaceChildren(...blankFps.map(value => new Option(String(value), String(value))))
+}
+function setupPickers() {
+  for (const picker of document.querySelectorAll('[data-picker]')) {
+    const select = picker.querySelector('select')
+    const button = picker.querySelector('.picker-button')
+    const list = picker.querySelector('.picker-list')
+    const close = () => {
+      list.hidden = true
+      button.setAttribute('aria-expanded', 'false')
+    }
+    const itemFor = option => {
+      const item = element('button', '', option.textContent)
+      item.type = 'button'
+      item.setAttribute('role', 'option')
+      item.dataset.value = option.value
+      item.addEventListener('click', () => {
+        select.value = option.value
+        select.dispatchEvent(new Event('change', { bubbles: true }))
+        close()
+      })
+      return item
+    }
+    const items = []
+    for (const node of select.children) {
+      if (node.tagName === 'OPTGROUP') {
+        items.push(element('div', 'picker-group', node.label))
+        for (const option of node.children) items.push(itemFor(option))
+      } else {
+        items.push(itemFor(node))
+      }
+    }
+    list.replaceChildren(...items)
+    const refresh = () => {
+      button.textContent = select.selectedOptions[0]?.textContent ?? ''
+      for (const item of list.querySelectorAll('button')) {
+        item.setAttribute('aria-selected', String(item.dataset.value === select.value))
+      }
+    }
+    button.addEventListener('click', event => {
+      event.preventDefault()
+      const open = list.hidden
+      list.hidden = !open
+      button.setAttribute('aria-expanded', String(open))
+      if (!open) return
+      refresh()
+      list.querySelector('button[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+    })
+    picker.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !list.hidden) {
+        event.preventDefault()
+        event.stopPropagation()
+        close()
+      }
+    })
+    document.addEventListener('pointerdown', event => {
+      if (!picker.contains(event.target)) close()
+    }, true)
+    select.addEventListener('change', refresh)
+    picker.refreshPicker = refresh
+    refresh()
+  }
+}
+fillBlankVideoOptions()
+setupPickers()
+
 const blankVideoDialog = $('blank-video-dialog')
 action('blank-video', () => {
   if (projectBusy) return
-  $('blank-video-form').reset()
+  const form = $('blank-video-form')
+  form.reset()
+  form.elements.resolution.value = '1920x1080'
+  form.elements.fps.value = '30'
+  form.elements.duration.value = '60'
+  form.elements.color.value = '#000000'
+  for (const picker of blankVideoDialog.querySelectorAll('[data-picker]')) picker.refreshPicker?.()
   blankVideoDialog.returnValue = 'cancel'
   blankVideoDialog.showModal()
 })
@@ -3095,6 +3249,12 @@ $('track-data').addEventListener('pointerdown', event => {
   event.preventDefault()
   const point = marqueePoint(event)
   marquee = { id: event.pointerId, ...point, clientX: event.clientX, clientY: event.clientY, selected, selectedCues: new Set(selectedCues), active: false }
+  // 点空白区域即取消当前选中，拖动时再按框选结果重新选中。
+  selected = undefined
+  selectedCues.clear()
+  refreshTrackControls()
+  renderCueForm()
+  renderViewport()
   ;(lane ?? $('track-lanes')).setPointerCapture(event.pointerId)
 })
 $('track-data').addEventListener('pointermove', updateMarquee)
@@ -3369,13 +3529,8 @@ zoomBar.addEventListener('pointerdown', event => {
 })
 
 zoomBar.addEventListener('keydown', event => {
-  const { usable, maxScroll } = timelineView()
-  const span = usable * 1000 / pixelsPerSecond
-  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-    event.preventDefault()
-    const step = width(span * (event.shiftKey ? 1 : 0.1))
-    scroll.scrollLeft = Math.max(0, Math.min(maxScroll, scroll.scrollLeft + (event.key === 'ArrowRight' ? step : -step)))
-  } else if (event.key === '+' || event.key === '=' || event.key === '-' || event.key === '_') {
+  const { maxScroll } = timelineView()
+  if (event.key === '+' || event.key === '=' || event.key === '-' || event.key === '_') {
     event.preventDefault()
     const factor = event.key === '-' || event.key === '_' ? 1 / 1.25 : 1.25
     zoomBy(factor)

@@ -364,11 +364,11 @@
       <h2 id="blank-video-heading">添加空白视频</h2>
       <p class="dialog-description">用纯色画面作为时间基准，不需要真实视频文件；合成视频时会输出同色画面加字幕。</p>
       <div class="columns">
-        <label>颜色<input name="color" type="color" value="#000000" required></label>
-        <label>分辨率<select name="resolution"><option value="1920x1080" selected>1920 × 1080</option><option value="3840x2160">3840 × 2160</option><option value="1280x720">1280 × 720</option><option value="1080x1920">1080 × 1920（竖屏）</option></select></label>
+        <label>颜色<input name="color" type="color" class="color-swatch" value="#000000" required></label>
+        <label>分辨率<div class="picker" data-picker><select name="resolution"></select><button type="button" class="picker-button" aria-haspopup="listbox" aria-expanded="false"></button><div class="picker-list" role="listbox" hidden></div></div></label>
       </div>
       <div class="columns">
-        <label>帧率<select name="fps"><option>24</option><option>25</option><option selected>30</option><option>50</option><option>60</option></select></label>
+        <label>帧率<div class="picker" data-picker><select name="fps"></select><button type="button" class="picker-button" aria-haspopup="listbox" aria-expanded="false"></button><div class="picker-list" role="listbox" hidden></div></div></label>
         <label>时长（秒）<input name="duration" type="number" min="1" max="86400" step="1" value="60" required></label>
       </div>
       <div class="dialog-actions"><button value="cancel">取消</button><button class="primary" id="blank-video-create" value="create">创建</button></div>

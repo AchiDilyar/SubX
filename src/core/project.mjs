@@ -32,7 +32,7 @@ export function isSolidMedia(media) {
     typeof media.color === 'string' && /^#[0-9a-f]{6}$/i.test(media.color) &&
     Number.isSafeInteger(media.width) && media.width >= 16 && media.width <= 7680 && media.width % 2 === 0 &&
     Number.isSafeInteger(media.height) && media.height >= 16 && media.height <= 7680 && media.height % 2 === 0 &&
-    Number.isSafeInteger(media.fps) && media.fps >= 1 && media.fps <= 120 &&
+    typeof media.fps === 'number' && Number.isFinite(media.fps) && media.fps >= 1 && media.fps <= 240 &&
     Number.isSafeInteger(media.duration) && media.duration >= 100 && media.duration <= 86400000
 }
 
@@ -80,7 +80,8 @@ export function validateProject(project) {
   for (const track of project.tracks) {
     if (!track || typeof track.id !== 'string' || tracks.has(track.id) ||
         typeof track.name !== 'string' || typeof track.visible !== 'boolean' || !Array.isArray(track.cues) ||
-        (track.locked !== undefined && typeof track.locked !== 'boolean')) {
+        (track.locked !== undefined && typeof track.locked !== 'boolean') ||
+        (track.label !== undefined && (typeof track.label !== 'string' || track.label.length > 60))) {
       throw new Error('工程中的轨道数据无效')
     }
     tracks.add(track.id)

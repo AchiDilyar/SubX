@@ -153,5 +153,14 @@ export function createAssPreview(host, reportFailure, redraw) {
     }
   }
 
-  return { sync, draw, ready: id => layers.get(id)?.canvas.dataset.ready === 'true' }
+  return {
+    sync,
+    draw,
+    ready: id => layers.get(id)?.canvas.dataset.ready === 'true',
+    // 图层还在初始化 libass 时既不算就绪，也不该退回基础文本预览，否则会先闪一帧错误排版。
+    pending: id => {
+      const layer = layers.get(id)
+      return Boolean(layer) && layer.canvas.dataset.ready === undefined
+    },
+  }
 }
