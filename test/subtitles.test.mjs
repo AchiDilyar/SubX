@@ -205,9 +205,11 @@ test('project fades serialize as ASS tags without overriding an existing fade', 
   assert.equal(writeAss(track, styles), source)
   for (const script of [writeAss(track, styles, true), renderAss(track, styles, undefined, true)]) {
     const output = readAss(script).cues
-    assert.equal(output[0].text, String.raw`{\fad(50,50)}{\an8}Short`)
+    assert.equal(output[0].text, String.raw`{\fad(100,100)}{\an8}Short`)
     assert.equal(output[1].text, String.raw`{\fad(40,80)}Custom`)
   }
+  // 渐入渐出时长按设置统一写入，入场和出场一致。
+  assert.equal(readAss(writeAss(track, styles, 250)).cues[0].text, String.raw`{\fad(250,250)}{\an8}Short`)
 })
 
 test('generated ASS includes styles referenced by override resets and preserves mixed SRT text', () => {

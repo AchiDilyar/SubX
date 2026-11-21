@@ -1,4 +1,5 @@
 const { execFile } = require('node:child_process')
+const { existsSync } = require('node:fs')
 const { join } = require('node:path')
 const { promisify } = require('node:util')
 
@@ -8,14 +9,17 @@ const notarization = process.env.SUBX_MAC_NOTARY_PROFILE
 const windowsCertificate = process.env.SUBX_WINDOWS_CERTIFICATE
 const macIcon = join(__dirname, 'src', 'assets', 'SubX.icns')
 const projectIcon = join(__dirname, 'src', 'assets', 'SubXProjectFile.icns')
+// 随包分发的 FFmpeg 内核（npm run fetch:ffmpeg 下载）；没有就不带，运行时回退到系统 PATH。
+const bundledTools = ['ffmpeg', 'ffmpeg.exe', 'ffprobe', 'ffprobe.exe']
+  .map(name => join(__dirname, 'resources', name)).filter(existsSync)
 
 module.exports = {
   packagerConfig: {
     asar: true,
-    ignore: [/^\/scripts\/desktop-smoke(?:\/|$)/, /^\/src\/assets\/SubX\.icns$/, /^\/src\/assets\/SubXProjectFile\.icns$/],
+    ignore: [/^\/scripts\/desktop-smoke(?:\/|$)/, /^\/resources(?:\/|$)/, /^\/src\/assets\/SubX\.icns$/, /^\/src\/assets\/SubXProjectFile\.icns$/],
     appBundleId: 'app.subx.desktop',
     icon: macIcon,
-    extraResource: [projectIcon],
+    extraResource: [projectIcon, ...bundledTools],
     extendInfo: {
       CFBundleDocumentTypes: [{
         CFBundleTypeName: 'SubX 工程',

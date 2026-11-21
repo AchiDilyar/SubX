@@ -1,5 +1,12 @@
-import { renderAss, plainAssCues, watermarkLayer } from '../core/ass.mjs'
+import { renderAss, plainAssCues } from '../core/ass.mjs'
 import { printTime } from '../core/srt.mjs'
+
+// 项目设置里的淡入淡出：开关打开时返回统一时长（毫秒），否则 false。
+export function fadeOf(settings) {
+  if (!settings?.fade) return false
+  const value = Number(settings.fadeDuration ?? 100)
+  return Number.isFinite(value) ? Math.max(0, Math.min(2000, Math.round(value))) : 100
+}
 
 export function assLayers(tracks, styles, settings, duration, draft, selectedTracks) {
   const layers = []
@@ -13,20 +20,16 @@ export function assLayers(tracks, styles, settings, duration, draft, selectedTra
       layer: original.ass?.indexed ? order : undefined,
       cues: original.cues.map(cue => cue.id === draft?.id ? { ...cue, text: draft.text } : cue),
     }
-    if (track.ass && track.cues.length) layers.push({ track, styles, fade: settings?.fade, order })
+    if (track.ass && track.cues.length) layers.push({ track, styles, fade: fadeOf(settings), order })
     if (!track.ass && track.cues.length) {
       plain.push(...track.cues)
       plainOrder = Math.max(plainOrder, order)
     }
   }
   if (plain.length) {
-    layers.push({ track: { id: 'plain-subtitles', cues: plainAssCues(plain, styles) }, styles, fade: settings?.fade, order: plainOrder })
+    layers.push({ track: { id: 'plain-subtitles', cues: plainAssCues(plain, styles) }, styles, fade: fadeOf(settings), order: plainOrder })
   }
   layers.sort((left, right) => left.order - right.order)
-  if (settings?.watermark && duration > 0) {
-    const { track, style } = watermarkLayer(duration)
-    layers.push({ track, styles: [style] })
-  }
   return layers
 }
 
@@ -69,7 +72,7 @@ export function bindComposition({ project, currentTrack, hasDraft, report, media
     get('composition-source').textContent = ready ? info.name : '请先打开视频'
     get('composition-info').textContent = ready ? info.width + ' × ' + info.height + ' · ' + printTime(Math.round(info.duration * 1000), '.') : ''
     if (!running) {
-      const hasOutput = count || project().settings?.watermark
+      const hasOutput = count || (project().settings?.watermark && project().settings?.watermarkImage?.path)
       message.textContent = hasDraft() ? '请先应用或取消编辑区的草稿。' : !hasOutput ? '所选范围内还没有字幕正文。' : ''
       start.disabled = !ready || !hasOutput || hasDraft()
     }
@@ -100,6 +103,16 @@ export function bindComposition({ project, currentTrack, hasDraft, report, media
     if (info.solid) options.solid = info.solid
     options.layers = compositionLayers(project().tracks, project().styles, project().settings,
       Math.ceil(info.duration * 100) * 10, new Set(selectedTracks().map(track => track.id)))
+    const watermark = project().settings?.watermark ? project().settings.watermarkImage : null
+    if (watermark?.path) {
+      options.watermark = {
+        path: watermark.path,
+        scale: watermark.scale,
+        x: watermark.x,
+        y: watermark.y,
+        opacity: watermark.opacity,
+      }
+    }
     running = true
     form.querySelector('fieldset').disabled = true
     start.disabled = true

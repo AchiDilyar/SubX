@@ -2,14 +2,24 @@ import { execFile, spawn } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, chmod, lstat, mkdtemp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, delimiter, dirname, extname, isAbsolute, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { isSolidMedia } from '../core/project.mjs'
 
 const inspect = promisify(execFile)
 const codecs = new Map([['h264', 'libx264'], ['hevc', 'libx265']])
 
+function validWatermark(watermark) {
+  return watermark === undefined || watermark === null || (typeof watermark === 'object' &&
+    typeof watermark.path === 'string' && watermark.path.length > 0 && !watermark.path.includes('\0') &&
+    Number.isFinite(watermark.scale) && watermark.scale >= 1 && watermark.scale <= 100 &&
+    Number.isFinite(watermark.x) && watermark.x >= 0 && watermark.x <= 100 &&
+    Number.isFinite(watermark.y) && watermark.y >= 0 && watermark.y <= 100 &&
+    Number.isFinite(watermark.opacity) && watermark.opacity >= 0 && watermark.opacity <= 100)
+}
+
 export function validateComposition(options) {
-  if (!options || !codecs.has(options.codec) || !['fast', 'medium', 'slow'].includes(options.preset) ||
+  if (!options || !validWatermark(options.watermark) || !codecs.has(options.codec) || !['fast', 'medium', 'slow'].includes(options.preset) ||
       !Number.isInteger(options.crf) || options.crf < 0 || options.crf > 51 ||
       !['source', '720', '1080', '2160'].includes(options.height) ||
       !['source', '24', '25', '30', '60'].includes(options.fps) || !['128', '192', '320', 'none'].includes(options.audio) ||
@@ -27,10 +37,19 @@ function ffmpegDirectories() {
   return directories
 }
 
+// 随应用打包的 FFmpeg：打包后在 Resources 下，开发时在仓库 resources/ 下。
+export function bundledEncoders() {
+  const binary = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+  const list = []
+  if (process.resourcesPath) list.push(join(process.resourcesPath, binary))
+  try { list.push(fileURLToPath(new URL('../../resources/' + binary, import.meta.url))) } catch {}
+  return list
+}
+
 export async function findEncoder(options, savedPath, signal, selectedPath) {
   const binary = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
   const candidates = selectedPath ? [selectedPath] :
-    [process.env.SUBX_FFMPEG_PATH, savedPath, ...ffmpegDirectories().map(dir => join(dir, binary))]
+    [process.env.SUBX_FFMPEG_PATH, savedPath, ...bundledEncoders(), ...ffmpegDirectories().map(dir => join(dir, binary))]
   const probe = { encoding: 'utf8', windowsHide: true, timeout: 5000, signal }
   for (const file of new Set(candidates)) {
     signal.throwIfAborted()
@@ -123,10 +142,24 @@ export async function encodeVideo({ binary, source, solid, destination, options,
       ? ['-f', 'lavfi', '-i', 'color=c=0x' + solid.color.slice(1) + ':s=' + solid.width + 'x' + solid.height +
         ':r=' + solid.fps + ':d=' + solid.duration / 1000]
       : ['-protocol_whitelist', 'file', '-f', /\.(webm|mkv)$/i.test(source) ? 'matroska' : 'mov', '-i', resolve(source)]
-    const args = ['-hide_banner', '-nostdin', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1',
-      ...input, '-map', '0:V:0',
-      '-vf', filters.join(','), '-c:v', codecs.get(options.codec), '-preset', options.preset,
-      '-crf', String(options.crf), '-pix_fmt', 'yuv420p']
+    const watermark = options.watermark
+    const args = ['-hide_banner', '-nostdin', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', ...input]
+    if (watermark) {
+      // 水印图片作为第二路输入：按画面宽度的百分比缩放，再按百分比定位叠加。
+      args.push('-i', resolve(watermark.path))
+      const graph = [
+        filters.length ? '[0:v]' + filters.join(',') + '[base]' : '[0:v]null[base]',
+        '[1:v]format=rgba,colorchannelmixer=aa=' + (watermark.opacity / 100).toFixed(3) + '[wma]',
+        '[wma][base]scale2ref=w=ref_w*' + (watermark.scale / 100).toFixed(4) + ':h=ow/mdar[wm][base2]',
+        '[base2][wm]overlay=x=main_w*' + (watermark.x / 100).toFixed(4) + ':y=main_h*' +
+          (watermark.y / 100).toFixed(4) + ':format=auto:eof_action=repeat[out]',
+      ].join(';')
+      args.push('-filter_complex', graph, '-map', '[out]')
+    } else {
+      args.push('-map', '0:V:0', '-vf', filters.join(','))
+    }
+    args.push('-c:v', codecs.get(options.codec), '-preset', options.preset,
+      '-crf', String(options.crf), '-pix_fmt', 'yuv420p')
     if (options.codec === 'hevc') args.push('-tag:v', 'hvc1')
     if (solid || options.audio === 'none') args.push('-an')
     else args.push('-map', '0:a:0?', '-c:a', 'aac', '-b:a', options.audio + 'k')
@@ -181,7 +214,8 @@ export async function readWaveform(binary, source, duration, signal) {
 
 export async function readFrameTimes(savedPath, source, signal) {
   const name = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe'
-  const preferred = [process.env.SUBX_FFMPEG_PATH, savedPath].filter(file => file && isAbsolute(file)).map(file => dirname(file))
+  const preferred = [process.env.SUBX_FFMPEG_PATH, savedPath, ...bundledEncoders()]
+    .filter(file => file && isAbsolute(file)).map(file => dirname(file))
   let probe
   for (const directory of new Set([...preferred, ...ffmpegDirectories()])) {
     signal.throwIfAborted()
@@ -193,16 +227,23 @@ export async function readFrameTimes(savedPath, source, signal) {
   }
   if (!probe) return null
   const demuxer = /\.(webm|mkv)$/i.test(source) ? 'matroska' : 'mov'
-  const { stdout } = await inspect(probe, [
-    '-v', 'error', '-protocol_whitelist', 'file', '-f', demuxer, '-select_streams', 'V:0',
-    '-show_entries', 'frame=best_effort_timestamp_time:format=start_time',
-    '-of', 'compact=p=1:nk=0', '-i', resolve(source),
-  ], { encoding: 'utf8', windowsHide: true, timeout: 180000, maxBuffer: 64 * 1024 * 1024, signal })
-  const origin = Number(/^format\|start_time=(-?\d+(?:\.\d+)?)/m.exec(stdout)?.[1] ?? 0)
-  const timestamps = new Set()
-  for (const [, timestamp] of stdout.matchAll(/^frame\|best_effort_timestamp_time=(-?\d+(?:\.\d+)?)/gm)) {
-    const microseconds = Math.round((Number(timestamp) - origin) * 1e6)
-    if (Number.isSafeInteger(microseconds) && microseconds >= 0) timestamps.add(microseconds)
+  const base = ['-v', 'error', '-protocol_whitelist', 'file', '-f', demuxer, '-select_streams', 'V:0',
+    '-of', 'compact=p=1:nk=0', '-i', resolve(source)]
+  const options = { encoding: 'utf8', windowsHide: true, timeout: 180000, maxBuffer: 64 * 1024 * 1024, signal }
+  function collect(stdout, pattern) {
+    const origin = Number(/^format\|start_time=(-?\d+(?:\.\d+)?)/m.exec(stdout)?.[1] ?? 0)
+    const timestamps = new Set()
+    for (const [, timestamp] of stdout.matchAll(pattern)) {
+      const microseconds = Math.round((Number(timestamp) - origin) * 1e6)
+      if (Number.isSafeInteger(microseconds) && microseconds >= 0) timestamps.add(microseconds)
+    }
+    return [...timestamps].sort((a, b) => a - b)
   }
-  return Float64Array.from([...timestamps].sort((a, b) => a - b), value => value / 1000)
+  // 先用 packet 时间戳：不解析每一帧，长视频也只要零点几秒。
+  const packets = await inspect(probe, ['-show_entries', 'packet=pts_time:format=start_time', ...base], options)
+  const packetTimes = collect(packets.stdout, /^packet\|pts_time=(-?\d+(?:\.\d+)?)/gm)
+  if (packetTimes.length) return Float64Array.from(packetTimes, value => value / 1000)
+  // 极少数文件没有 packet pts：退回逐帧解析。
+  const frames = await inspect(probe, ['-show_entries', 'frame=best_effort_timestamp_time:format=start_time', ...base], options)
+  return Float64Array.from(collect(frames.stdout, /^frame\|best_effort_timestamp_time=(-?\d+(?:\.\d+)?)/gm), value => value / 1000)
 }

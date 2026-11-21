@@ -3,7 +3,7 @@ import { alignCue, frameBoundaries, nearestBoundary } from '../core/frame-grid.m
 import { inspectSrt, printTime, readTime, writeSrt } from '../core/srt.mjs'
 import { assStyleResetCues, assTextCues, captureCue, pasteCue, groupAssLayers, importAssLayers, moveCuesToTrack, fallbackAssStyle, field, newStyle, readAss, renameAssStyleReset, setField, writeAss } from '../core/ass.mjs'
 
-import { assLayers, bindComposition } from './composition.mjs'
+import { assLayers, bindComposition, fadeOf } from './composition.mjs'
 import { createAssPreview } from './ass-preview.mjs'
 
 const $ = id => document.getElementById(id)
@@ -472,6 +472,7 @@ function reset(next, media, documentHandle = null) {
   ensureSelection()
   $('cue-tab').hidden = true
   switchTab('styles', false)
+  updateTabPages()
   scroll.scrollTop = scroll.scrollLeft = 0
   attachVideo(media)
   render()
@@ -480,7 +481,7 @@ function reset(next, media, documentHandle = null) {
 function openResult(result) {
   if (!result) return
   reset(result.project, result.media, result.document)
-  status(result.project.media && !result.media ? '原视频不可用，请重新定位视频。' : '已打开工程')
+  status(typeof result.project.media === 'string' && !result.media ? '原视频不可用，请重新定位视频。' : '已打开工程')
 }
 
 function attachVideo(reference) {
@@ -542,6 +543,7 @@ function fitPicture() {
   const boxWidth = Math.min(availableWidth, stage.clientHeight * ar)
   frame.style.width = boxWidth + 'px'
   frame.style.height = boxWidth / ar + 'px'
+  applyWatermarkOverlay()
   updatePreview()
 }
 
@@ -904,6 +906,26 @@ function drawWaveform(usable) {
   }
 }
 
+// 同一轨道上两条字幕时间相交的区间，用于时间轴上的重叠高亮和刻度尺提示。
+function rowOverlaps(row) {
+  const events = []
+  for (const cue of row.ordered) {
+    if (cue.end <= cue.start) continue
+    events.push([cue.start, 1], [cue.end, -1])
+  }
+  events.sort((left, right) => left[0] - right[0] || left[1] - right[1])
+  const intervals = []
+  let depth = 0
+  let start = 0
+  for (const [time, change] of events) {
+    const previous = depth
+    depth += change
+    if (previous < 2 && depth >= 2) start = time
+    else if (previous >= 2 && depth < 2 && time > start) intervals.push({ start, end: time })
+  }
+  return intervals
+}
+
 function laneLayout(track) {
   const ordered = [...track.cues].sort((left, right) => left.start - right.start || left.end - right.end)
   const laneById = new Map()
@@ -986,6 +1008,8 @@ function render() {
     lanes.push(lane)
     row.lane = lane
     row.buttons = new Map()
+    row.overlapLayer = element('div', 'overlap-layer')
+    lane.append(row.overlapLayer)
   }
   $('track-headings').replaceChildren(spacer, headings, headingResizer)
   $('track-lanes').replaceChildren(...lanes)
@@ -1000,6 +1024,18 @@ function render() {
   renderViewport()
   renderStyleList(true)
   for (const key of ['fade', 'watermark']) $('project-' + key).checked = Boolean(project.settings?.[key])
+  $('project-fade-duration').value = String(project.settings?.fadeDuration ?? 100)
+  $('fade-duration-field').hidden = !project.settings?.fade
+  const watermarkImage = project.settings?.watermarkImage
+  $('watermark-fields').hidden = !project.settings?.watermark
+  $('watermark-name').textContent = watermarkImage?.path
+    ? (watermarkImage.name || watermarkImage.path.split(/[\\/]/).pop()) : '选择水印图片'
+  $('watermark-scale').value = String(watermarkImage?.scale ?? 14)
+  $('watermark-opacity').value = String(watermarkImage?.opacity ?? 80)
+  $('watermark-x').value = String(watermarkImage?.x ?? 78)
+  $('watermark-y').value = String(watermarkImage?.y ?? 6)
+  void syncWatermarkImage()
+  applyWatermarkOverlay()
 }
 
 function refreshTrackControls() {
@@ -1029,7 +1065,7 @@ function timelineView() {
   return { usable, contentWidth, maxScroll: Math.max(0, contentWidth - usable) }
 }
 
-function renderRuler(start, end, limit, trackData) {
+function renderRuler(start, end, limit, trackData, overlapIntervals = []) {
   const { fps, major, minor, frameTicks } = rulerSteps()
   const ticks = []
   const markedEnds = mediaDuration && mediaDuration < limit ? [mediaDuration, limit] : [limit]
@@ -1052,6 +1088,15 @@ function renderRuler(start, end, limit, trackData) {
   }
   for (const at of markedEnds) {
     if (end >= at && start <= at) tick(at, rulerLabel(at, fps, major), ' major-tick end-tick')
+  }
+  for (const interval of overlapIntervals) {
+    if (interval.end < start || interval.start > end) continue
+    const mark = element('div', 'overlap-mark')
+    mark.style.left = width(interval.start) + 'px'
+    mark.style.width = Math.max(2, width(interval.end - interval.start)) + 'px'
+    mark.title = '字幕重叠 ' + printTime(interval.end - interval.start, '.')
+    mark.append(element('span', 'overlap-badge', '!'))
+    ticks.push(mark)
   }
   for (const at of project.markers ?? []) {
     if (at < start || at > end) continue
@@ -1084,7 +1129,18 @@ function renderViewport() {
   if (!guide.hidden) guide.style.left = width(drag.snapTime) + 'px'
   const visibleStart = deltaFor(Math.max(0, scroll.scrollLeft - 110))
   const visibleEnd = deltaFor(scroll.scrollLeft + usable + 110)
-  renderRuler(visibleStart, visibleEnd, timeLimit, trackData)
+  const overlapRows = new Map(rows.map(row => [row, rowOverlaps(row)]))
+  const rulerOverlaps = []
+  const seenOverlaps = new Set()
+  for (const intervals of overlapRows.values()) {
+    for (const interval of intervals) {
+      const key = interval.start + ':' + interval.end
+      if (seenOverlaps.has(key)) continue
+      seenOverlaps.add(key)
+      rulerOverlaps.push(interval)
+    }
+  }
+  renderRuler(visibleStart, visibleEnd, timeLimit, trackData, rulerOverlaps)
   drawWaveform(usable)
   const paired = new Set(selected ? linkedIds(project, selected) : [])
   const overlaps = dragOverlapIds(drag)
@@ -1093,6 +1149,15 @@ function renderViewport() {
     row.lane.classList.toggle('active', row.track.id === currentTrack)
     row.lane.classList.toggle('drop-target', drag?.destination === row)
     row.lane.classList.toggle('locked-track', Boolean(row.track.locked))
+    if (row.overlapLayer) {
+      row.overlapLayer.replaceChildren(...(overlapRows.get(row) ?? []).map(interval => {
+        const band = element('div', 'cue-overlap')
+        band.style.left = width(interval.start) + 'px'
+        band.style.width = Math.max(2, width(interval.end - interval.start)) + 'px'
+        band.title = '字幕重叠 ' + printTime(interval.end - interval.start, '.')
+        return band
+      }))
+    }
     const retained = new Set()
     for (const cue of row.ordered) {
       if (cue.start > visibleEnd && !drag) break
@@ -1125,7 +1190,9 @@ function renderViewport() {
           if (!event.repeat) openCueEditor(row.track, cue)
         })
         row.buttons.set(cue.id, block)
-        row.lane.append(block)
+        // 字幕块保持在前，重叠高亮层始终垫在最后，避免影响按位置取块的既有选择器。
+        if (row.overlapLayer) row.lane.insertBefore(block, row.overlapLayer)
+        else row.lane.append(block)
       }
       const displayText = row.track.ass || cue.assText ? cue.text.replace(/\{[^}]*\}/g, '') : cue.text
       const linked = linkedIds(project, cue.id).length === 2
@@ -1148,9 +1215,9 @@ function renderViewport() {
       block.style.left = width(start) + 'px'
       block.style.top = row.laneById.get(cue.id) * (CUE_HEIGHT + CUE_LANE_GAP) + CUE_LANE_PADDING + 'px'
       block.style.height = CUE_HEIGHT + 'px'
-      const crossing = drag?.destination && drag.movingIds.has(cue.id)
-      block.classList.toggle('crossing-track', Boolean(crossing))
-      block.style.transform = crossing ? 'translateY(' + (drag.destination.lane.offsetTop - row.lane.offsetTop) + 'px)' : ''
+      const targetRow = drag?.trackDelta && drag.movingIds.has(cue.id) ? rows[rows.indexOf(row) + drag.trackDelta] : undefined
+      block.classList.toggle('crossing-track', Boolean(targetRow))
+      block.style.transform = targetRow ? 'translateY(' + (targetRow.lane.offsetTop - row.lane.offsetTop) + 'px)' : ''
       const trimming = drag?.edge && drag.ids.has(cue.id)
       block.style.width = Math.max(trimming ? 1 : 14, durationWidth) + 'px'
       block.dataset.start = String(start)
@@ -1276,6 +1343,7 @@ function pick(track, cue, keepGroup = false) {
   renderViewport()
   $('cue-tab').hidden = false
   switchTab('cue')
+  updateTabPages()
   refreshInspectorPreview()
 }
 
@@ -1328,8 +1396,9 @@ function startDrag(event, track, cue) {
   }
   const limit = edge ? requested => trimDelta(cue, edge, requested) : requested => moveDelta(cues, requested)
   const snapEdges = edge ? [cue[edge]] : [cue.start, cue.end]
-  drag = { pointer: event.pointerId, startX: event.clientX, scrollLeft: scroll.scrollLeft, startY: event.clientY, source: track, cues, targets, ids, movingIds, edge, grid: editingBoundaries(),
-    boundaries, snapEdges, group, overlapRows, minDelta: limit(-Infinity), maxDelta: limit(Infinity), delta: 0 }
+  drag = { pointer: event.pointerId, startX: event.clientX, scrollLeft: scroll.scrollLeft, startY: event.clientY, source: track, sourceRowIndex: rows.findIndex(row => row.track === track),
+    cues, targets, ids, movingIds, edge, grid: editingBoundaries(),
+    boundaries, snapEdges, group, overlapRows, minDelta: limit(-Infinity), maxDelta: limit(Infinity), delta: 0, trackDelta: 0 }
   event.currentTarget.focus({ preventScroll: true })
   event.currentTarget.setPointerCapture(event.pointerId)
 }
@@ -1358,11 +1427,22 @@ function pointerMove(event) {
   const snap = snapping && requested ? findDragSnap(requested) : undefined
   const delta = snap?.delta ?? Math.max(drag.minDelta, Math.min(drag.maxDelta, requested))
   const zone = scroll.getBoundingClientRect()
-  const lane = !drag.edge && (!drag.group || drag.targets.every(target => target.row.track === drag.source)) && Math.abs(event.clientY - drag.startY) > 4 &&
+  const lane = !drag.edge && Math.abs(event.clientY - drag.startY) > 4 &&
     event.clientY >= zone.top && event.clientY < zone.bottom &&
     document.elementsFromPoint(event.clientX, event.clientY).find(node => node.classList.contains('track-lane'))
-  const destination = lane && rows.find(row => row.lane === lane && row.track !== drag.source && !row.track.locked) || undefined
-  if (delta === drag.delta && snap?.time === drag.snapTime && destination === drag.destination) return
+  const laneRow = lane && rows.find(row => row.lane === lane)
+  // 多选跨轨道移动：整组按同一轨道数平移，任何一条越界或目标轨道锁定就取消。
+  let trackDelta = 0
+  if (laneRow) {
+    const step = rows.indexOf(laneRow) - drag.sourceRowIndex
+    if (step && drag.targets.every(({ row }) => {
+      const target = rows[rows.indexOf(row) + step]
+      return Boolean(target) && !target.track.locked
+    })) trackDelta = step
+  }
+  const destination = trackDelta ? laneRow : undefined
+  if (delta === drag.delta && snap?.time === drag.snapTime && destination === drag.destination && trackDelta === drag.trackDelta) return
+  drag.trackDelta = trackDelta
   drag.destination = destination
   drag.delta = delta
   drag.snapTime = snap?.time
@@ -1396,7 +1476,9 @@ function dragOverlapIds(adjustment) {
   const overlaps = new Set()
   for (const { cue, row } of adjustment.targets) {
     const { start, end } = cueTiming(cue, adjustment)
-    const zone = adjustment.movingIds.has(cue.id) ? adjustment.destination ?? row : row
+    const zone = adjustment.movingIds.has(cue.id) && adjustment.trackDelta
+      ? rows[rows.indexOf(row) + adjustment.trackDelta] ?? row
+      : row
     for (const other of adjustment.overlapRows.get(zone)) {
       if (other.start >= end) break
       if (other.end <= start || adjustment.ids.has(other.id)) continue
@@ -1410,7 +1492,7 @@ function dragOverlapIds(adjustment) {
 function endDrag(pointer, commit) {
   if (!drag || drag.pointer !== pointer) return
   const adjustment = drag
-  const { delta, cues, edge, source, destination } = adjustment
+  const { delta, cues, edge, destination, trackDelta } = adjustment
   cancelAnimationFrame(dragFrame)
   dragFrame = 0
   drag = undefined
@@ -1424,9 +1506,18 @@ function endDrag(pointer, commit) {
     const overlaps = dragOverlapIds(adjustment)
     edit(() => {
       for (const cue of cues) Object.assign(cue, cueTiming(cue, adjustment))
-      if (destination) {
-        const moving = cues.filter(cue => adjustment.movingIds.has(cue.id))
-        moveCuesToTrack(project, source, destination.track, moving)
+      if (trackDelta) {
+        // 多选可能横跨多条轨道：按来源轨道分组，各自平移到目标轨道。
+        const groups = new Map()
+        for (const { cue, row } of adjustment.targets) {
+          if (!adjustment.movingIds.has(cue.id)) continue
+          const target = rows[rows.indexOf(row) + trackDelta]
+          if (!target) continue
+          const entry = groups.get(row.track.id) ?? { source: row.track, target: target.track, cues: [] }
+          entry.cues.push(cue)
+          groups.set(row.track.id, entry)
+        }
+        for (const group of groups.values()) moveCuesToTrack(project, group.source, group.target, group.cues)
         currentTrack = destination.track.id
         selectedCues.clear()
       }
@@ -1446,8 +1537,35 @@ function switchTab(tab, preview = true) {
     $(name + '-tab').setAttribute('aria-selected', String(tab === name))
     $(name + '-panel').hidden = tab !== name
   }
+  revealTab(tab)
   if (preview) refreshInspectorPreview()
 }
+
+// 配置区变窄时标签放不下：右侧出现箭头，点一下翻到下一页标签。
+const tabsScroll = $('tabs-scroll')
+const tabsPrev = $('tabs-prev')
+const tabsNext = $('tabs-next')
+function updateTabPages() {
+  if (!tabsScroll) return
+  const max = tabsScroll.scrollWidth - tabsScroll.clientWidth
+  tabsPrev.hidden = max <= 1 || tabsScroll.scrollLeft <= 1
+  tabsNext.hidden = max <= 1 || tabsScroll.scrollLeft >= max - 1
+}
+function pageTabs(direction) {
+  tabsScroll.scrollBy({ left: direction * Math.max(72, tabsScroll.clientWidth - 40), behavior: 'smooth' })
+}
+function revealTab(name) {
+  const button = $(name + '-tab')
+  if (!button || button.hidden) return
+  const box = button.getBoundingClientRect()
+  const view = tabsScroll.getBoundingClientRect()
+  if (box.left < view.left) tabsScroll.scrollLeft -= view.left - box.left + 6
+  else if (box.right > view.right) tabsScroll.scrollLeft += box.right - view.right + 6
+}
+tabsPrev.addEventListener('click', () => pageTabs(-1))
+tabsNext.addEventListener('click', () => pageTabs(1))
+tabsScroll.addEventListener('scroll', updateTabPages, { passive: true })
+new ResizeObserver(updateTabPages).observe(tabsScroll)
 
 function recordDraft(form) {
   const binding = inspectorForms.get(form)
@@ -1505,13 +1623,19 @@ const styleSections = [
   ['字形', [
     ['Name', '名称', 'text'], ['Fontname', '字体', 'text'],
     ['Fontsize', '字号', 'number'], ['PrimaryColour', '文字颜色', 'color'],
+    ['Bold', '粗体', 'toggle'], ['Italic', '斜体', 'toggle'], ['Underline', '下划线', 'toggle'], ['StrikeOut', '删除线', 'toggle'],
   ]],
-  ['描边', [
+  ['描边与阴影', [
     ['Outline', '描边宽度', 'number'], ['OutlineColour', '描边颜色', 'color'],
+    ['Shadow', '阴影距离', 'number'], ['BackColour', '阴影颜色', 'color'],
   ]],
-  ['位置', [
+  ['位置与对齐', [
     ['Alignment', '对齐', 'alignment'], ['MarginV', '垂直边距', 'number'],
     ['MarginL', '左边距', 'number'], ['MarginR', '右边距', 'number'],
+  ]],
+  ['缩放与旋转', [
+    ['ScaleX', '横向缩放', 'number'], ['ScaleY', '纵向缩放', 'number'],
+    ['Spacing', '字间距', 'number'], ['Angle', '旋转角度', 'number'],
   ]],
 ]
 
@@ -1565,18 +1689,60 @@ function styleControl(key, title, type, previous) {
     wrapper.append(element('span', 'field-label', title), group)
     return { wrapper, input: picker }
   }
-  const wrapper = element('label', 'style-field', title)
-  const input = element(type === 'alignment' ? 'select' : 'input')
+  if (type === 'toggle') {
+    const wrapper = element('div', 'style-field')
+    wrapper.append(element('span', 'field-label', title))
+    const input = element('input')
+    input.type = 'hidden'
+    input.value = Number(previous) ? '1' : '0'
+    const button = element('button', 'style-toggle', title === '粗体' ? 'B' : title === '斜体' ? 'I' : title === '下划线' ? 'U' : 'S')
+    button.type = 'button'
+    button.title = title
+    button.setAttribute('aria-label', title)
+    button.setAttribute('aria-pressed', String(input.value === '1'))
+    button.addEventListener('click', () => {
+      input.value = input.value === '1' ? '0' : '1'
+      button.setAttribute('aria-pressed', String(input.value === '1'))
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    wrapper.append(button, input)
+    return { wrapper, input }
+  }
   if (type === 'alignment') {
-    const alignments = ['左下', '居中靠下', '右下', '左中', '居中', '右中', '左上', '居中靠上', '右上']
-    input.append(...alignments.map((name, index) => new Option(name, String(index + 1))))
-  } else {
-    input.type = type
-    input.required = true
-    if (type === 'number') {
-      input.min = key === 'Fontsize' ? '1' : '0'
-      input.step = 'any'
+    const wrapper = element('div', 'style-field')
+    wrapper.append(element('span', 'field-label', title))
+    const input = element('input')
+    input.type = 'hidden'
+    input.value = String(Number(previous) || 2)
+    const grid = element('div', 'alignment-grid')
+    grid.setAttribute('role', 'group')
+    grid.setAttribute('aria-label', title)
+    const names = ['左下', '居中靠下', '右下', '左中', '居中', '右中', '左上', '居中靠上', '右上']
+    // 宫格按视觉顺序排：上排 7-9，中排 4-6，下排 1-3。
+    for (const value of [7, 8, 9, 4, 5, 6, 1, 2, 3]) {
+      const cell = element('button', 'alignment-cell')
+      cell.type = 'button'
+      cell.dataset.value = String(value)
+      cell.title = names[value - 1]
+      cell.setAttribute('aria-label', names[value - 1])
+      cell.setAttribute('aria-pressed', String(String(value) === input.value))
+      cell.addEventListener('click', () => {
+        input.value = String(value)
+        for (const other of grid.children) other.setAttribute('aria-pressed', String(other.dataset.value === input.value))
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      grid.append(cell)
     }
+    wrapper.append(grid, input)
+    return { wrapper, input }
+  }
+  const wrapper = element('label', 'style-field', title)
+  const input = element('input')
+  input.type = type
+  input.required = true
+  if (type === 'number') {
+    input.min = key === 'Fontsize' ? '1' : '0'
+    input.step = 'any'
   }
   input.value = previous ?? ''
   wrapper.append(input)
@@ -1591,6 +1757,28 @@ function styleFieldValue(input, previous) {
   if (input.value === old.hex && alpha === old.alpha) return previous?.trim()
   const [red, green, blue] = input.value.slice(1).match(/../g)
   return '&H' + (alpha.toString(16).padStart(2, '0') + blue + green + red).toUpperCase()
+}
+
+// 样式编辑器顶部的实时预览：无背景、无边框，只渲染当前样式的文字。
+function applyStylePreview(style) {
+  const node = $('style-editor')?.querySelector('.style-preview-text')
+  if (!node || !style) return
+  const property = name => field(style.fields, name)
+  const size = Number(property('Fontsize')) || 36
+  const shown = Math.max(12, Math.min(40, size))
+  const ratio = Math.min(1, 40 / Math.max(12, size))
+  node.style.fontFamily = property('Fontname') || ''
+  node.style.fontSize = shown + 'px'
+  node.style.color = cssAssColor(property('PrimaryColour'))
+  node.style.webkitTextStroke = Math.max(0, Number(property('Outline')) || 0) * ratio + 'px ' + cssAssColor(property('OutlineColour'))
+  const shadow = (Number(property('Shadow')) || 0) * ratio
+  node.style.textShadow = shadow > 0 ? shadow + 'px ' + shadow + 'px ' + cssAssColor(property('BackColour')) : 'none'
+  node.style.fontWeight = Number(property('Bold')) ? 'bold' : 'normal'
+  node.style.fontStyle = Number(property('Italic')) ? 'italic' : 'normal'
+  node.style.textDecoration = [Number(property('Underline')) && 'underline', Number(property('StrikeOut')) && 'line-through'].filter(Boolean).join(' ')
+  node.style.letterSpacing = (Number(property('Spacing')) || 0) * .4 + 'px'
+  node.style.transform = 'rotate(' + -(Number(property('Angle')) || 0) + 'deg) scale(' +
+    (Number(property('ScaleX')) || 100) / 100 + ', ' + (Number(property('ScaleY')) || 100) / 100 + ')'
 }
 
 function refreshInspectorPreview(projectChanged = false) {
@@ -1611,6 +1799,7 @@ function refreshInspectorPreview(projectChanged = false) {
   previewDraftKey = key
   previewCueText = nextCueText
   previewStyles = draft ? project.styles.map(style => style.id === draft.id ? draft : style) : project.styles
+  if (draft) applyStylePreview(draft)
   assPreview.sync(assLayers(project.tracks, previewStyles,
     project.settings, Math.ceil(mediaDuration / 10) * 10, nextCueText))
   updatePreview()
@@ -1704,6 +1893,9 @@ function renderStyleList(projectChanged = false) {
   tail.append(discard, apply)
   actions.append(head, tail)
   form.prepend(actions)
+  const preview = element('div', 'style-preview')
+  preview.append(element('span', 'style-preview-text', 'SubX字幕样式预览Aa'))
+  actions.after(preview)
   form.addEventListener('submit', event => {
     event.preventDefault()
     const name = inputs.get('Name').value.trim()
@@ -1756,8 +1948,11 @@ function renderStyleList(projectChanged = false) {
       }
     })
     status('已保存样式')
+    // 保存后回到样式列表，避免误以为还在草稿状态。
+    openStyle(undefined)
   })
   editor.append(form)
+  applyStylePreview(style)
   bindDraft(form, styleDrafts, style.id, renderStyleList)
   readStylePreview = () => {
     let fields
@@ -2553,7 +2748,7 @@ async function exportTrack(current, format) {
     return
   }
   const layer = current.ass && !current.ass.indexed ? undefined : trackIndex(project.tracks, current)
-  const text = format === 'ass' ? writeAss(current, project.styles, project.settings?.fade, layer) : writeSrt(cues)
+  const text = format === 'ass' ? writeAss(current, project.styles, fadeOf(project.settings), layer) : writeSrt(cues)
   if (await app.exportSubtitles({ name: trackLabel(current), format, text })) {
     status('已导出 ' + format.toUpperCase() + summary)
   }
@@ -2922,15 +3117,34 @@ action('about-app', async () => {
   $('about-version').textContent = await app.getVersion()
   $('about-dialog').showModal()
 })
+$('about-homepage').addEventListener('click', event => {
+  event.preventDefault()
+  app.openExternal('https://github.com/AchiDilyar/SubX')
+})
 
 action('styles-tab', () => switchTab('styles'))
 action('settings-tab', () => switchTab('settings'))
 action('cue-tab', () => switchTab('cue'))
 for (const key of ['fade', 'watermark']) {
   $('project-' + key).addEventListener('change', event => edit(() => {
-    project.settings = { fade: false, watermark: false, ...project.settings, [key]: event.target.checked }
+    project.settings = { fade: false, watermark: false, fadeDuration: 100, ...project.settings, [key]: event.target.checked }
   }))
+  $('project-' + key).addEventListener('change', () => {
+    if (key === 'fade') $('fade-duration-field').hidden = !$('project-fade').checked
+    if (key === 'watermark') {
+      $('watermark-fields').hidden = !$('project-watermark').checked
+      void syncWatermarkImage()
+      applyWatermarkOverlay()
+    }
+  })
 }
+$('project-fade-duration').addEventListener('change', event => {
+  const value = Math.max(0, Math.min(2000, Math.round(Number(event.target.value) || 0)))
+  event.target.value = String(value)
+  edit(() => {
+    project.settings = { fade: false, watermark: false, fadeDuration: 100, ...project.settings, fadeDuration: value }
+  })
+})
 const toolModes = { 'select-tool': 'select', 'split-tool': 'split', 'select-forward': 'select-forward', 'select-backward': 'select-backward' }
 for (const [id, mode] of Object.entries(toolModes)) action(id, () => setToolMode(mode))
 action('link-tool', () => setLinkMode(!linkMode))
@@ -3785,3 +3999,79 @@ bindComposition({
     pause: pausePlayback,
   }),
 })
+
+// ---- 视频水印：图片选择、位置/尺寸/透明度与预览叠加 ----
+let watermarkCache = { path: '', url: '', tried: false }
+function watermarkImageSettings() {
+  const settings = project.settings
+  const image = settings?.watermarkImage
+  if (!settings?.watermark || !image?.path) return null
+  return {
+    path: image.path,
+    scale: Math.max(1, Math.min(100, Number(image.scale) || 14)),
+    x: Math.max(0, Math.min(100, Number(image.x) || 0)),
+    y: Math.max(0, Math.min(100, Number(image.y) || 0)),
+    opacity: Math.max(0, Math.min(100, Number.isFinite(Number(image.opacity)) ? Number(image.opacity) : 80)),
+  }
+}
+function applyWatermarkOverlay() {
+  const node = $('watermark-overlay')
+  if (!node) return
+  const image = watermarkImageSettings()
+  if (!image || !watermarkCache.url || !hasPicture()) {
+    node.hidden = true
+    return
+  }
+  if (node.getAttribute('src') !== watermarkCache.url) node.src = watermarkCache.url
+  node.hidden = false
+  node.style.width = Math.max(8, frame.clientWidth * image.scale / 100) + 'px'
+  node.style.left = image.x + '%'
+  node.style.top = image.y + '%'
+  node.style.opacity = String(image.opacity / 100)
+}
+async function syncWatermarkImage() {
+  const image = watermarkImageSettings()
+  if (!image) {
+    watermarkCache = { path: '', url: '', tried: false }
+    applyWatermarkOverlay()
+    return
+  }
+  if (watermarkCache.path === image.path && watermarkCache.tried) {
+    applyWatermarkOverlay()
+    return
+  }
+  watermarkCache = { path: image.path, url: '', tried: true }
+  const loaded = await app.readWatermark(image.path).catch(() => null)
+  if (watermarkCache.path !== image.path) return
+  watermarkCache.url = loaded?.dataUrl ?? ''
+  applyWatermarkOverlay()
+}
+function watermarkDefaults(path, name) {
+  return { path, name, scale: 14, x: 78, y: 6, opacity: 80 }
+}
+function setWatermarkImage(patch) {
+  const current = project.settings?.watermarkImage ?? watermarkDefaults('', '')
+  project.settings = {
+    fade: false, watermark: false, fadeDuration: 100, ...project.settings,
+    watermarkImage: { ...current, ...patch },
+  }
+}
+$('watermark-choose').addEventListener('click', async () => {
+  const picked = await app.chooseWatermark().catch(error => { status(errorText(error)); return null })
+  if (!picked) return
+  watermarkCache = { path: picked.path, url: picked.dataUrl, tried: true }
+  edit(() => {
+    setWatermarkImage(watermarkDefaults(picked.path, picked.name))
+    project.settings.watermark = true
+  })
+  $('project-watermark').checked = true
+})
+for (const [key, id, min, max] of [['scale', 'watermark-scale', 1, 100], ['opacity', 'watermark-opacity', 0, 100],
+  ['x', 'watermark-x', 0, 100], ['y', 'watermark-y', 0, 100]]) {
+  $(id).addEventListener('change', event => {
+    const value = Math.max(min, Math.min(max, Math.round(Number(event.target.value) || 0)))
+    event.target.value = String(value)
+    edit(() => setWatermarkImage({ [key]: value }))
+  })
+}
+

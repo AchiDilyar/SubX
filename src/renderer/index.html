@@ -135,6 +135,7 @@
             <canvas id="preview-canvas" hidden></canvas>
             <div id="ass-overlays" aria-hidden="true"></div>
             <div id="captions" class="captions" aria-hidden="true"></div>
+            <img id="watermark-overlay" alt="" hidden draggable="false">
           </div>
           <div id="empty-video" class="empty-video">
             <img class="empty-wordmark" src="../assets/textLOGO.png" alt="SubX">
@@ -155,11 +156,15 @@
       </section>
       <div id="vertical-divider" class="divider vertical" role="separator" tabindex="0" aria-label="调整配置区宽度" aria-orientation="vertical"><span class="divider-handle" aria-hidden="true"></span></div>
       <aside class="inspector">
-        <header class="tabs" role="tablist">
-          <button id="styles-tab" role="tab" aria-selected="true" aria-controls="styles-panel"><svg class="icon" aria-hidden="true"><use href="#i-style"></use></svg>样式管理</button>
-          <button id="settings-tab" role="tab" aria-selected="false" aria-controls="settings-panel"><svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg>项目设置</button>
-          <button id="cue-tab" role="tab" aria-selected="false" aria-controls="cue-panel" hidden>字幕编辑</button>
-          <button id="script-tab" role="tab" aria-selected="false" aria-controls="script-panel"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg>待打轴</button>
+        <header class="tabs">
+          <button class="tabs-page prev" id="tabs-prev" type="button" aria-label="上一页标签" hidden></button>
+          <div class="tabs-scroll" id="tabs-scroll" role="tablist" aria-label="配置区标签">
+            <button id="styles-tab" role="tab" aria-selected="true" aria-controls="styles-panel"><svg class="icon" aria-hidden="true"><use href="#i-style"></use></svg>样式管理</button>
+            <button id="settings-tab" role="tab" aria-selected="false" aria-controls="settings-panel"><svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg>项目设置</button>
+            <button id="cue-tab" role="tab" aria-selected="false" aria-controls="cue-panel" hidden><svg class="icon" aria-hidden="true"><use href="#i-cue"></use></svg>字幕编辑</button>
+            <button id="script-tab" role="tab" aria-selected="false" aria-controls="script-panel"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg>待打轴</button>
+          </div>
+          <button class="tabs-page next" id="tabs-next" type="button" aria-label="下一页标签" hidden></button>
         </header>
         <section id="styles-panel" class="inspector-body" role="tabpanel" aria-labelledby="styles-tab">
           <div id="style-list-header" class="inspector-heading">项目样式 <button id="add-style" title="新建样式" aria-label="新建样式"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></button></div>
@@ -172,15 +177,30 @@
               <h3>字幕</h3>
               <label class="settings-row">
                 <input id="project-fade" type="checkbox">
-                <span class="settings-text"><strong>字幕渐入渐出</strong><small>每条字幕出现和消失时最多 150 毫秒淡入淡出；已经带淡入淡出标签的字幕保持不变。</small></span>
+                <span class="settings-text"><strong>字幕渐入渐出</strong><small>每条字幕出现和消失时按下面的统一时长淡入淡出；已经带淡入淡出标签的字幕保持不变。</small></span>
+              </label>
+              <label class="settings-inline" id="fade-duration-field" hidden>淡入淡出时长
+                <span class="settings-unit"><input id="project-fade-duration" type="number" min="0" max="2000" step="10" value="100">毫秒</span>
               </label>
             </section>
             <section class="settings-group">
               <h3>画面</h3>
               <label class="settings-row">
                 <input id="project-watermark" type="checkbox">
-                <span class="settings-text"><strong>画面水印</strong><small>在预览和合成视频的右上角叠加半透明的 SubX 水印。</small></span>
+                <span class="settings-text"><strong>视频水印</strong><small>选择一张图片，在预览画面和合成视频里叠加；尺寸、位置和不透明度都可以调。</small></span>
               </label>
+              <div class="watermark-fields" id="watermark-fields" hidden>
+                <button id="watermark-choose" type="button" class="settings-file">
+                  <svg class="icon" aria-hidden="true"><use href="#i-import"></use></svg>
+                  <span id="watermark-name">选择水印图片</span>
+                </button>
+                <div class="settings-grid">
+                  <label>缩放（%）<input id="watermark-scale" type="number" min="1" max="100" step="1" value="14"></label>
+                  <label>不透明度（%）<input id="watermark-opacity" type="number" min="0" max="100" step="1" value="80"></label>
+                  <label>X 位置（%）<input id="watermark-x" type="number" min="0" max="100" step="1" value="78"></label>
+                  <label>Y 位置（%）<input id="watermark-y" type="number" min="0" max="100" step="1" value="6"></label>
+                </div>
+              </div>
             </section>
           </div>
         </section>
@@ -318,13 +338,20 @@
       </div>
     </form>
   </dialog>
-  <dialog id="about-dialog" aria-labelledby="about-title">
-    <form method="dialog">
+  <dialog id="about-dialog" class="about-dialog" aria-labelledby="about-title">
+    <form method="dialog" class="about-body">
       <img class="about-icon" src="../assets/SubXIcon.png" alt="SubX 图标">
       <h2 id="about-title">SubX</h2>
-      <p class="dialog-description">多轨字幕编辑器。编排时间轴、校对双语字幕，并制作带字幕的视频。</p>
-      <div class="about-detail"><span>版本</span><output id="about-version"></output></div>
-      <div class="about-detail"><span>开发者</span><span class="about-dev">AchiDilyar</span></div>
+      <output id="about-version" class="about-version"></output>
+      <p class="about-summary">多轨字幕编辑器。编排时间轴、校对双语字幕，并制作带字幕的视频。</p>
+      <dl class="about-meta">
+        <div><dt>开发者</dt><dd>AchiDilyar</dd></div>
+        <div><dt>项目地址</dt><dd><a id="about-homepage" class="about-link" href="https://github.com/AchiDilyar/SubX">github.com/AchiDilyar/SubX</a></dd></div>
+      </dl>
+      <figure class="about-donate">
+        <img class="about-qr" src="../assets/about-qr.svg" alt="赞赏码占位图">
+        <figcaption>赞赏码</figcaption>
+      </figure>
       <div class="dialog-actions"><button autofocus>关闭</button></div>
     </form>
   </dialog>

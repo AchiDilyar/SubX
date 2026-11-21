@@ -3,3 +3,9 @@
 /dist/
 .DS_Store
 Thumbs.db
+
+# 打包用的 FFmpeg 内核（npm run fetch:ffmpeg 下载）
+/resources/ffmpeg
+/resources/ffmpeg.exe
+/resources/ffprobe
+/resources/ffprobe.exe

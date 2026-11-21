@@ -10,6 +10,7 @@
     "test": "node --test",
     "package": "electron-forge package",
     "make": "electron-forge make",
+    "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs",
     "test:desktop": "node scripts/desktop-smoke/run.mjs",
     "test:preview": "node scripts/desktop-smoke/run.mjs --preview"
   },

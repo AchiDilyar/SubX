@@ -618,15 +618,10 @@ async function run() {
   }
   await click('settings-tab')
   await click('project-watermark')
-  const watermarkPixels = `(() => {
-    const layer = document.querySelector('[data-layer="watermark"]')
-    return layer?.dataset.ready === 'true' && layer.width > 0 &&
-      layer.getContext('2d').getImageData(layer.width / 2, 0, layer.width / 2, layer.height / 3)
-        .data.some((value, index) => index % 4 === 3 && value > 50)
-  })()`
-  await expect(watermarkPixels, 'render the project watermark with libass')
+  await expect('!document.querySelector("#watermark-fields").hidden && document.querySelector("#watermark-overlay").hidden',
+    'reveal the watermark controls and keep the preview empty until an image is chosen')
   await click('undo')
-  await expect(`!document.querySelector('[data-layer="watermark"]')`, 'remove the watermark when undoing the project setting')
+  await expect('document.querySelector("#watermark-fields").hidden', 'hide the watermark controls when undoing the project setting')
   await click('play')
   await expect('document.querySelector("video").currentTime > 0.15', 'play local MP4')
   await click('play')
@@ -1394,12 +1389,15 @@ async function run() {
   await expect('(' + translucentWhite + ') && !(' + assPixels + ')', 'preview independently adjusted fill and outline opacity')
   await exec("document.querySelector('#style-editor form').requestSubmit()")
   await expect('document.querySelector("#status").textContent === "已保存样式"', 'save the ASS opacity changes')
+  await expect('document.querySelector("#style-editor").hidden && !document.querySelector("#styles-list").hidden', 'return to the style list after saving')
+  await exec('[...document.querySelectorAll(".style-list-item")].find(row => row.title === "Default").querySelector("[aria-label=编辑]").click()')
   await chooseExport('ass')
   await expect('document.querySelector("#status").textContent === "已导出 ASS"', 'export the saved opacity bytes')
   assert.match(await readFile(join(directory, 'opacity.ass'), 'utf8'), /Style: Default,Noto Sans SC,56,&H80FFFFFF,&H000000FF,&HFF111111,/)
   await exec(changeStyle)
   await exec("document.querySelector('#style-editor form').requestSubmit()")
   await expect('document.querySelector("#status").textContent === "已保存样式"', 'change RGB on a translucent style')
+  await exec('[...document.querySelectorAll(".style-list-item")].find(row => row.title === "Default").querySelector("[aria-label=编辑]").click()')
   await chooseExport('ass')
   await expect('document.querySelector("#status").textContent === "已导出 ASS"', 'export RGB while preserving the opacity bytes')
   assert.match(await readFile(join(directory, 'opacity-rgb.ass'), 'utf8'), /Style: Default,Noto Sans SC,72,&H8033CC11,&H000000FF,&HFF111111,/)
@@ -1414,7 +1412,7 @@ async function run() {
   await expect('(' + assPixels + ') && !(' + greenAssPixels + ')', 'restore ASS pixels after undoing the saved style')
   await click('redo')
   await expect(greenAssPixels, 'restore ASS pixels after redoing the saved style')
-  await exec('document.querySelector("#style-editor [aria-label=返回样式列表]").click()')
+  await expect('document.querySelector("#style-editor").hidden && !document.querySelector("#styles-list").hidden', 'stay on the style list after the last save')
   await exec('[...document.querySelectorAll(".style-list-item")].find(row => row.title === "Default").querySelector("[aria-label=复制]").click()')
   await expect('document.querySelector(".style-list-item:last-child")?.title === "Default 副本"', 'duplicate ASS style at the end of the list')
   await exec(`(() => {

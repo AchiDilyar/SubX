@@ -352,7 +352,9 @@ function dialogueText(cue, start, end, fade = false) {
   const text = cue.text.replace(/\n/g, '\\N')
   if (!fade || [...text.matchAll(/(?<!\\)\{([^{}]*)\}/g)].some(([, tags]) =>
     [...dialogueTags(tags)].some(([name, args]) => args && /^(?:fad|fade)\s*$/.test(name)))) return text
-  const duration = Math.min(150, Math.floor((end - start) / 2))
+  // fade 可以是 true（旧行为）或具体毫秒数；入场和出场用同一时长。
+  const duration = Math.max(0, Math.round(typeof fade === 'number' ? fade : 100))
+  if (!duration) return text
   return `{\\fad(${duration},${duration})}` + text
 }
 
@@ -364,18 +366,6 @@ export function plainAssCues(cues, styles) {
     // SRT escape sequences and literal braces have no override semantics.
     text: cue.assText ? cue.text : cue.text.replace(/\\(?=[Nnh{}])/g, '\\\u200b').replace(/[{}]/g, '\\$&'),
   }))
-}
-
-export function watermarkLayer(duration) {
-  const style = newStyle('SubX Watermark')
-  Object.assign(style.fields, {
-    Fontsize: '42', Alignment: '9', MarginR: '40', MarginV: '30', PrimaryColour: '&H66FFFFFF',
-    OutlineColour: '&H88000000',
-  })
-  return {
-    track: { id: 'watermark', cues: [{ start: 0, end: duration, style: style.id, text: 'SubX' }] },
-    style,
-  }
 }
 
 function eventAppearance(cue, layer) {

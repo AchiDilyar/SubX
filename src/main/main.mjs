@@ -7,12 +7,12 @@ import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { validateProject } from '../core/project.mjs'
-import { encodeVideo, findEncoder, readFrameTimes, readWaveform, validateComposition } from './video-export.mjs'
+import { bundledEncoders, encodeVideo, findEncoder, readFrameTimes, readWaveform, validateComposition } from './video-export.mjs'
 
 const entry = 'subx://app/renderer/index.html'
 const appFiles = new Set([
   '/renderer/index.html', '/renderer/workspace.css', '/renderer/workspace.mjs',
-  '/renderer/composition.mjs', '/renderer/ass-preview.mjs', '/assets/NotoSansSC.ttf', '/assets/SubXIcon.png', '/assets/textLOGO.png',
+  '/renderer/composition.mjs', '/renderer/ass-preview.mjs', '/assets/NotoSansSC.ttf', '/assets/SubXIcon.png', '/assets/textLOGO.png', '/assets/about-qr.svg',
   '/core/project.mjs', '/core/srt.mjs', '/core/ass.mjs', '/core/frame-grid.mjs',
 ])
 const iconFiles = ["new", "folder", "recent", "save", "copy", "import", "export", "film", "monitor", "sliders", "style", "plus", "play", "pause", "undo", "redo", "track", "cue", "split", "select", "link", "snap", "eye", "eye-off", "info", "arrow", "pencil", "back", "trash", "power", "check", "keyboard", "external", "close", "lock", "expand", "collapse", "razor", "blade", "select-forward", "select-backward", "trim-start", "trim-end", "marker", "remove-track", "wave-symmetric", "wave-asymmetric", "wave-off", "unlock"].map(name => '/assets/icons/' + name + '.png')
@@ -27,6 +27,7 @@ const fileTypes = new Map([
   ['.html', 'text/html; charset=utf-8'], ['.css', 'text/css; charset=utf-8'],
   ['.js', 'application/javascript'], ['.mjs', 'application/javascript'],
   ['.wasm', 'application/wasm'], ['.ttf', 'font/ttf'], ['.woff2', 'font/woff2'], ['.png', 'image/png'],
+  ['.svg', 'image/svg+xml'],
 ])
 const mediaTypes = new Map([
   ['.mp4', 'video/mp4'], ['.m4v', 'video/mp4'], ['.mov', 'video/quicktime'],
@@ -269,6 +270,8 @@ function createWindow() {
 
 async function initialize() {
   nativeTheme.themeSource = 'dark'
+  // 打包后的资源可能丢失可执行位，启动时给内置 FFmpeg 补一次权限。
+  for (const binary of bundledEncoders()) chmod(binary, 0o755).catch(() => {})
   protocol.handle('subx-media', streamMedia)
   protocol.handle('subx', async request => {
     const url = new URL(request.url)
@@ -333,6 +336,26 @@ async function initialize() {
     return { name: basename(file), extension: extname(file).toLowerCase(), text: decodeText(contents, file, encoding) }
   }
   bind('subtitles:choose', window => chooseText(window, '字幕', ['srt', 'ass']))
+  async function readImageFile(file) {
+    const info = await stat(file)
+    if (!info.isFile()) throw new Error('请选择一张图片作为水印。')
+    if (info.size > 8 * 1024 * 1024) throw new Error('水印图片过大，请选择 8MB 以内的图片。')
+    const extension = extname(file).toLowerCase()
+    const mime = extension === '.png' ? 'image/png' : extension === '.webp' ? 'image/webp' : 'image/jpeg'
+    return { path: file, name: basename(file), dataUrl: 'data:' + mime + ';base64,' + (await readFile(file)).toString('base64') }
+  }
+  bind('watermark:choose', async window => {
+    const result = await dialog.showOpenDialog(window, {
+      title: '选择水印图片', properties: ['openFile'],
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+    })
+    const file = result.filePaths[0]
+    return file ? readImageFile(file) : null
+  })
+  bind('watermark:read', (_window, file) => {
+    if (typeof file !== 'string' || !file || file.includes('\0')) return null
+    return readImageFile(file).catch(() => null)
+  })
   bind('script:choose', window => chooseText(window, '文稿', ['txt']))
   async function readProject(window, file) {
     const session = mediaSessions.get(window)

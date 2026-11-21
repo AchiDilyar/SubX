@@ -63,8 +63,19 @@ export function validateProject(project) {
     throw new Error('工程中的文稿数据无效')
   }
   if (project.settings !== undefined && (!project.settings ||
-      typeof project.settings.fade !== 'boolean' || typeof project.settings.watermark !== 'boolean')) {
+      typeof project.settings.fade !== 'boolean' || typeof project.settings.watermark !== 'boolean' ||
+      (project.settings.fadeDuration !== undefined &&
+        (!Number.isFinite(project.settings.fadeDuration) || project.settings.fadeDuration < 0 || project.settings.fadeDuration > 2000)))) {
     throw new Error('工程设置无效')
+  }
+  const watermark = project.settings?.watermarkImage
+  if (watermark !== undefined && watermark !== null && (typeof watermark !== 'object' ||
+      typeof watermark.path !== 'string' || !watermark.path.trim() || watermark.path.includes('\0') ||
+      !Number.isFinite(watermark.scale) || watermark.scale < 1 || watermark.scale > 100 ||
+      !Number.isFinite(watermark.x) || watermark.x < 0 || watermark.x > 100 ||
+      !Number.isFinite(watermark.y) || watermark.y < 0 || watermark.y > 100 ||
+      !Number.isFinite(watermark.opacity) || watermark.opacity < 0 || watermark.opacity > 100)) {
+    throw new Error('工程中的水印设置无效')
   }
   if (project.markers !== undefined && (!Array.isArray(project.markers) ||
       !project.markers.every(mark => Number.isSafeInteger(mark) && mark >= 0))) {
