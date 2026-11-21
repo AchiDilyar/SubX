@@ -829,10 +829,21 @@ function pauseForSeek() {
   if (isSolid()) pauseSolidClock()
   else video.pause()
 }
+// 与时间码一致的“当前帧”：取离 time 最近的一帧，避免停在帧中间时按方向键画面不动。
+function nearestFrameIndex(milliseconds) {
+  const index = frameAt(milliseconds)
+  if (index <= 0) return 0
+  if (index >= frameTimes.length) return frameTimes.length - 1
+  return milliseconds - frameTimes[index - 1] <= frameTimes[index] - milliseconds ? index - 1 : index
+}
 function nudgePlayhead(direction, shift) {
   pauseForSeek()
-  if (frameTimes?.length && !shift) seekFrame(playheadPosition(), direction)
-  else seekFrame(playheadPosition() + direction * (shift ? 1000 : 100))
+  if (frameTimes?.length && !shift) {
+    const target = Math.max(0, Math.min(frameTimes.length - 1, nearestFrameIndex(time) + direction))
+    seek(frameTimes[target], true)
+  } else {
+    seekFrame(playheadPosition() + direction * (shift ? 1000 : 100))
+  }
   revealTimelinePosition(time)
 }
 
@@ -1646,7 +1657,7 @@ function renderStyleList(projectChanged = false) {
         label.append(element('small', 'style-list-source', source))
         row.title = `${name} · ${source}`
       }
-      const font = element('span', 'style-list-font', property('Fontname') || '—')
+      const font = element('span', 'style-list-font', property('Fontname') || '未设置')
       font.title = font.textContent
       const actions = element('div', 'style-row-actions')
       actions.append(
@@ -1654,7 +1665,7 @@ function renderStyleList(projectChanged = false) {
         styleButton('copy', '复制', () => createStyle(item)),
         styleDeleteButton(item),
       )
-      row.append(preview, label, font, element('span', 'style-list-size', property('Fontsize') || '—'), actions)
+      row.append(preview, label, font, element('span', 'style-list-size', property('Fontsize') || '-'), actions)
       return row
     }))
     if (!styles.length) list.append(element('p', 'muted', '暂无样式'))
@@ -1681,7 +1692,12 @@ function renderStyleList(projectChanged = false) {
   discard.type = 'button'
   const apply = element('button', 'primary', '保存')
   apply.type = 'submit'
-  actions.append(back, element('strong', 'style-editor-name', styleName(style)), discard, styleDeleteButton(style), apply)
+  // 删除是破坏性操作，和右侧的取消/保存分开，避免误点。
+  const head = element('div', 'style-editor-head')
+  head.append(back, element('strong', 'style-editor-name', styleName(style)), styleDeleteButton(style))
+  const tail = element('div', 'style-editor-tail')
+  tail.append(discard, apply)
+  actions.append(head, tail)
   form.prepend(actions)
   form.addEventListener('submit', event => {
     event.preventDefault()
@@ -2250,7 +2266,7 @@ function updateProjectTitle() {
   const name = projectDocument?.name ?? '未命名工程'
   const modified = dirty() || hasPendingForm()
   $('save-project').title = name + (modified ? '（有未保存修改）' : '')
-  document.title = projectDocument ? name + (modified ? ' ●' : '') + ' — SubX' : 'SubX'
+  document.title = projectDocument ? name + (modified ? ' ●' : '') + ' · SubX' : 'SubX'
 }
 
 async function withProjectOperation(callback) {
@@ -2450,7 +2466,7 @@ app.onCloseRequest(() => {
 action('save-project', () => withProjectOperation(() => writeCurrentProject(false)))
 action('save-project-as', () => withProjectOperation(() => writeCurrentProject(true)))
 
-function confirmSrtImport(name, cueCount, issues) {
+function confirmSubtitleImport(name, cueCount, issues) {
   const dialog = $('srt-import-dialog')
   $('srt-import-summary').textContent = `${name} · ${cueCount} 条有效字幕，${issues.length} 条有问题`
   const visible = issues.slice(0, 50).map(issue => element('li', '', issue))
@@ -2472,8 +2488,8 @@ action('import-subtitles', () => withProjectOperation(async () => {
   if (!file) return
   const ass = file.extension === '.ass' ? readAss(file.text) : null
   const { cues, issues = [] } = ass ?? inspectSrt(file.text)
-  if (issues.length && !await confirmSrtImport(file.name, cues.length, issues)) return
-  if (!ass && !cues.length) {
+  if (issues.length && !await confirmSubtitleImport(file.name, cues.length, issues)) return
+  if (!cues.length) {
     status(`${file.name} 没有可导入的字幕。`)
     return
   }

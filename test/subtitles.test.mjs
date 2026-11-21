@@ -299,3 +299,39 @@ test('same-layer imports merge without overwriting existing cues', () => {
   assert.match(exported, /Dialogue: 0,0:00:01\.00,0:00:02\.00,Default 副本,Added/)
   assert.doesNotThrow(() => validateProject(project))
 })
+
+test('reads SRT timestamps with a single-digit hour', () => {
+  assert.deepEqual(readSrt('1\n0:00:01,000 --> 0:00:02,500\n短句\n'), [{ start: 1000, end: 2500, text: '短句' }])
+  assert.deepEqual(readSrt('1\n1:02:03.004 --> 1:02:05.000\n长片\n'), [{ start: 3723004, end: 3725000, text: '长片' }])
+})
+
+const assScript = (rows, style = 'Style: Default,Arial,42') => [
+  '[Script Info]', 'ScriptType: v4.00+', 'PlayResX: 1920', 'PlayResY: 1080', '',
+  '[V4+ Styles]', 'Format: Name, Fontname, Fontsize', style, '',
+  '[Events]', 'Format: Layer, Start, End, Style, Text', ...rows,
+].join('\n')
+
+test('reads ASS centiseconds written with a single digit', () => {
+  const ass = readAss(assScript(['Dialogue: 0,0:00:01.5,0:00:02.5,Default,短句']))
+  assert.deepEqual([ass.cues[0].start, ass.cues[0].end], [1500, 2500])
+})
+
+test('skips malformed ASS rows and reports them instead of failing the import', () => {
+  const ass = readAss(assScript([
+    'Dialogue: 0,0:00:01.00,0:00:02.00,Default,保留',
+    'Dialogue: 0,0:00:03.00,0:00:03.00,Default,零时长',
+    'Dialogue: 0,坏时间,0:00:05.00,Default,时间码',
+    'Dialogue: 0,0:00:06.00',
+  ]))
+  assert.deepEqual(ass.cues.map(cue => cue.text), ['保留'])
+  assert.equal(ass.issues.length, 3)
+  assert.match(ass.issues[0], /第 13 行的事件时间码无效或时长为零/)
+})
+
+test('skips an ASS style row with too few columns and still imports its events', () => {
+  const ass = readAss(assScript(['Dialogue: 0,0:00:01.00,0:00:02.00,Default,正文'], 'Style: 坏样式'))
+  assert.equal(ass.styles.length, 0)
+  assert.equal(ass.cues.length, 1)
+  assert.match(ass.issues[0], /第 8 行的样式字段不足/)
+})
+

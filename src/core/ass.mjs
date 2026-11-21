@@ -47,10 +47,13 @@ function parseRow(text, format) {
 }
 
 function readAssTime(value) {
-  const time = value?.trim().match(/^(\d+):(\d{2}):(\d{2})\.(\d{2})$/)
+  // 少数工具只写 1 位百分秒（0:00:01.5），按 VSFilter / libass 的口径当成 5 厘秒。
+  const time = value?.trim().match(/^(\d+):(\d{2}):(\d{2})\.(\d{1,2})$/)
   if (!time) return NaN
-  const [, h, m, s, cs] = time.map(Number)
-  const milliseconds = ((h * 60 + m) * 60 + s) * 1000 + cs * 10
+  const [, h, m, s, fraction] = time
+  // 百分秒字段按十进制小数理解：.5 就是 0.5 秒，和两位写法 .50 保持一致。
+  const milliseconds = ((Number(h) * 60 + Number(m)) * 60 + Number(s)) * 1000 +
+    Math.round(Number(fraction) * (fraction.length === 1 ? 100 : 10))
   return m < 60 && s < 60 && Number.isSafeInteger(milliseconds) ? milliseconds : NaN
 }
 
@@ -64,6 +67,7 @@ export function readAss(source) {
   const lines = text.split(/\r?\n/)
   const styles = []
   const cues = []
+  const issues = []
   const formats = new Map()
   const resolution = { width: 384, height: 288 }
   let section = ''
@@ -81,7 +85,10 @@ export function readAss(source) {
     if (kind === 'style' && section === 'v4+ styles') {
       const columns = formats.get(section) ?? styleFields
       const fields = parseRow(row[3], columns)
-      if (!fields || !field(fields, 'Name')?.trim()) throw new Error('ASS 第 ' + (index + 1) + ' 行的样式无效')
+      if (!fields || !field(fields, 'Name')?.trim()) {
+        issues.push('第 ' + (index + 1) + ' 行的样式字段不足，已跳过')
+        continue
+      }
       styles.push({ id: crypto.randomUUID(), fields, line: index, prefix: row[1], columns })
     }
     if (kind === 'dialogue' && section === 'events') {
@@ -91,7 +98,9 @@ export function readAss(source) {
       const end = readAssTime(fields && field(fields, 'End'))
       const raw = fields && field(fields, 'Text')
       if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start || raw === undefined) {
-        throw new Error('ASS 第 ' + (index + 1) + ' 行的字幕无效')
+        // 单条事件坏掉不应该让整份 ASS 导入失败：跳过并交给导入确认窗口说明。
+        issues.push('第 ' + (index + 1) + ' 行的事件时间码无效或时长为零，已跳过')
+        continue
       }
       cues.push({
         start, end, text: raw.replace(/\\N/g, '\n'),
@@ -103,7 +112,7 @@ export function readAss(source) {
   for (const cue of cues) {
     cue.style = styles.find(style => field(style.fields, 'Name').trim() === field(cue.ass.fields, 'Style')?.trim())?.id
   }
-  return { lines, newline, resolution, styles, cues }
+  return { lines, newline, resolution, styles, cues, issues }
 }
 
 function rowText(fields, columns) {

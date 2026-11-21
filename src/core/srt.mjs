@@ -1,4 +1,5 @@
-const srtTime = /(\d{2,}):(\d{2}):(\d{2})[,.](\d{3})/
+// 小时允许 1 位以上：部分工具会写出 0:00:01,000 这种形式。
+const srtTime = /(\d{1,}):(\d{2}):(\d{2})[,.](\d{3})/
 const timingLine = new RegExp('^(' + srtTime.source + ')\\s*-->\\s*(' + srtTime.source + ')(?:\\s.*)?$')
 
 export function readTime(value) {

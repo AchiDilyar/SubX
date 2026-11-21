@@ -168,8 +168,20 @@
         </section>
         <section id="settings-panel" class="inspector-body" role="tabpanel" aria-labelledby="settings-tab" hidden>
           <div class="project-options">
-            <label><input id="project-fade" type="checkbox">字幕渐入渐出</label>
-            <label><input id="project-watermark" type="checkbox">画面水印</label>
+            <section class="settings-group">
+              <h3>字幕</h3>
+              <label class="settings-row">
+                <input id="project-fade" type="checkbox">
+                <span class="settings-text"><strong>字幕渐入渐出</strong><small>每条字幕出现和消失时最多 150 毫秒淡入淡出；已经带淡入淡出标签的字幕保持不变。</small></span>
+              </label>
+            </section>
+            <section class="settings-group">
+              <h3>画面</h3>
+              <label class="settings-row">
+                <input id="project-watermark" type="checkbox">
+                <span class="settings-text"><strong>画面水印</strong><small>在预览和合成视频的右上角叠加半透明的 SubX 水印。</small></span>
+              </label>
+            </section>
           </div>
         </section>
         <section id="script-panel" class="inspector-body" role="tabpanel" aria-labelledby="script-tab" hidden>
@@ -298,7 +310,7 @@
   </dialog>
   <dialog id="srt-import-dialog" aria-labelledby="srt-import-title" aria-describedby="srt-import-summary">
     <form method="dialog">
-      <h2 id="srt-import-title">SRT 导入检查</h2>
+      <h2 id="srt-import-title">字幕导入检查</h2>
       <p id="srt-import-summary"></p>
       <ul id="srt-import-issues"></ul>
       <div class="dialog-actions">
@@ -396,7 +408,7 @@
             <label>帧率<select name="fps"><option value="source">与源视频一致</option><option>24</option><option>25</option><option>30</option><option>60</option></select></label>
           </div>
           <label>恒定质量 CRF<input name="crf" type="number" min="0" max="51" value="20" required aria-describedby="composition-quality-help"></label>
-          <small id="composition-quality-help">范围 0–51。常用 18–24，数值越低画质越高。</small>
+          <small id="composition-quality-help">范围 0 到 51。常用 18 到 24，数值越低画质越高。</small>
         </div>
         <div class="composition-section"><h3>音频</h3>
           <label>音频编码<select name="audio"><option value="128">AAC · 128 kb/s</option><option value="192" selected>AAC · 192 kb/s</option><option value="320">AAC · 320 kb/s</option><option value="none">移除音频</option></select></label>

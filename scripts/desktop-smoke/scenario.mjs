@@ -1901,7 +1901,7 @@ async function run() {
   await mouse('mousePressed', emptyLanePoint.x, emptyLanePoint.y, 2)
   await mouse('mouseReleased', emptyLanePoint.x, emptyLanePoint.y, 2)
   await expect('document.querySelector(".track-heading:last-child").classList.contains("active")', 'select a track by double-clicking its lane')
-  assert.equal(await exec('getComputedStyle(document.querySelector(".cue:not(.playing)")).borderTopColor'), 'rgb(68, 45, 15)', 'draw a dark border around unselected cue blocks')
+  assert.equal(await exec('getComputedStyle(document.querySelector(".cue:not(.playing):not(.selected)")).borderTopColor'), 'rgb(68, 45, 15)', 'draw a dark border around unselected cue blocks')
   const narrowHeading = await exec('document.querySelector("#track-headings").offsetWidth')
   assert(narrowHeading >= 96 && narrowHeading <= 128, 'Use a narrower default track header width')
   await exec(`(() => {
