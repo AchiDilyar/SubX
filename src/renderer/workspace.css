@@ -577,3 +577,8 @@ input[type=checkbox]:checked::after {
 input[type=radio]:checked { border-color: var(--accent); }
 input[type=radio]:checked::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #fff; }
 
+
+#recent-list button.recent-item { display: grid; gap: 2px; width: 100%; margin-bottom: 4px; padding: 8px 10px; text-align: left; }
+.recent-item-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-item-path { color: var(--muted); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+

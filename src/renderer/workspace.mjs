@@ -155,6 +155,10 @@ const styleName = style => field(style.fields, 'Name').trim()
 function status(message) {
   $('status').textContent = message
 }
+// 主进程抛出的错误会带 Electron 的 IPC 前缀，展示前统一去掉。
+function errorText(error) {
+  return String(error?.message ?? error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '')
+}
 
 function element(tag, className, value) {
   const node = document.createElement(tag)
@@ -226,7 +230,7 @@ function action(id, callback) {
     try {
       await callback()
     } catch (error) {
-      status(error.message.replace(/^Error invoking remote method '[^']+': Error: /, ''))
+      status(errorText(error))
     }
   })
 }
@@ -2053,7 +2057,7 @@ blankVideoDialog.addEventListener('close', () => {
     updateProjectTitle()
     attachVideo(null)
     status('已添加空白视频 · ' + media.width + '×' + media.height + ' · ' + media.fps + ' fps')
-  }).catch(error => status(error.message))
+  }).catch(error => status(errorText(error)))
 })
 
 // —— 文稿打轴 ——
@@ -2157,7 +2161,7 @@ scriptDialog.addEventListener('close', () => {
     switchTab('script')
     renderScriptPanel()
     status('已导入 ' + lines.length + ' 行文稿' + (missing ? ' · ' + missing + ' 行缺译文' : ''))
-  }).catch(error => status(error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')))
+  }).catch(error => status(errorText(error)))
 })
 action('script-tab', () => switchTab('script'))
 function playheadNow() {
@@ -2322,17 +2326,20 @@ action('new-project', () => changeProject(() => {
   reset(newWorkspaceProject(), null)
   status('已新建工程')
 }))
-action('open-project', () => changeProject(async () => openResult(await app.openProject())))
+action('open-project', () => changeProject(async () => openResult(await app.openProject())).catch(error => status(errorText(error))))
 action('recent-projects', () => withProjectOperation(async () => {
   const projects = await app.recentProjects()
   const dialog = $('recent-dialog')
   const names = projects.map(path => {
-    const button = element('button', '', path.split(/[\\/]/).pop())
+    const name = path.split(/[\\/]/).pop()
+    const folder = path.slice(0, Math.max(0, path.length - name.length)).replace(/[\\/]$/, '')
+    const button = element('button', 'recent-item')
     button.type = 'button'
     button.title = path
+    button.append(element('span', 'recent-item-name', name), element('span', 'recent-item-path', folder))
     button.addEventListener('click', () => {
       dialog.close()
-      changeProject(async () => openResult(await app.openProject(path))).catch(error => status(error.message))
+      changeProject(async () => openResult(await app.openProject(path))).catch(error => status(errorText(error)))
     })
     return button
   })
@@ -2406,7 +2413,7 @@ async function saveThenClose() {
   try {
     saved = await writeCurrentProject(false)
   } catch (error) {
-    failure = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
+    failure = errorText(error)
   } finally {
     setQuitDialogBusy(false)
   }
@@ -2452,7 +2459,7 @@ quitDialog.addEventListener('close', () => setQuitDialogBusy(false))
 
 // 访达双击工程文件：和「最近工程」走同一条打开路径，未保存内容仍会先询问。
 app.onOpenPath?.(path => {
-  changeProject(async () => openResult(await app.openProjectPath(path))).catch(error => status(error.message))
+  changeProject(async () => openResult(await app.openProjectPath(path))).catch(error => status(errorText(error)))
 })
 
 app.onCloseRequest(() => {
@@ -2556,7 +2563,7 @@ $('export-format').addEventListener('close', async () => {
   const current = exportSelection
   exportSelection = undefined
   if (!['srt', 'ass'].includes(format) || !current || switchingProject) return
-  try { await exportTrack(current, format) } catch (error) { status(error.message) }
+  try { await exportTrack(current, format) } catch (error) { status(errorText(error)) }
 })
 action('add-track', () => edit(() => {
   const next = addTopTrack(project.tracks)

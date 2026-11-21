@@ -344,7 +344,12 @@ async function initialize() {
       contents = await readFile(location)
       project = JSON.parse(decodeText(contents, file))
     } catch (error) {
-      if (error.code === 'ENOENT') await remember(file, false)
+      if (error.code === 'ENOENT') {
+        await remember(file, false)
+        throw new Error('工程文件已不存在，可能被移动或删除。')
+      }
+      // 内容不是合法工程时给出可读提示，而不是把 JSON 解析错误直接抛给界面。
+      if (error instanceof SyntaxError) throw new Error('无法打开工程：文件内容不是有效的 SubX 工程。')
       throw error
     }
     validateProject(project)
