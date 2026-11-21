@@ -1065,6 +1065,16 @@ function timelineView() {
   return { usable, contentWidth, maxScroll: Math.max(0, contentWidth - usable) }
 }
 
+// 重叠区间按当前 rows 缓存：滚动时不会每帧重算几千条字幕。
+let overlapCacheRows = null
+let overlapCacheMap = null
+function overlapsForRows() {
+  if (overlapCacheRows === rows && overlapCacheMap) return overlapCacheMap
+  overlapCacheRows = rows
+  overlapCacheMap = new Map(rows.map(row => [row, rowOverlaps(row)]))
+  return overlapCacheMap
+}
+
 function renderRuler(start, end, limit, trackData, overlapIntervals = []) {
   const { fps, major, minor, frameTicks } = rulerSteps()
   const ticks = []
@@ -1129,7 +1139,7 @@ function renderViewport() {
   if (!guide.hidden) guide.style.left = width(drag.snapTime) + 'px'
   const visibleStart = deltaFor(Math.max(0, scroll.scrollLeft - 110))
   const visibleEnd = deltaFor(scroll.scrollLeft + usable + 110)
-  const overlapRows = new Map(rows.map(row => [row, rowOverlaps(row)]))
+  const overlapRows = overlapsForRows()
   const rulerOverlaps = []
   const seenOverlaps = new Set()
   for (const intervals of overlapRows.values()) {
