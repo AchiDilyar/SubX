@@ -77,9 +77,11 @@ button.primary:hover:not(:disabled) { background: #214e8b; }
 .monitor.preview-maximized { position: fixed; inset: 44px 0 0; z-index: 80; border: 0; border-radius: 0; background: #000; }
 .monitor.preview-maximized .panel-heading, .monitor.preview-maximized .monitor-controls { background: #101010; }
 .monitor.preview-maximized .monitor-stage { background: #000; }
-.preview-progress { display: none; padding: 4px 12px; background: #151515; }
+.preview-progress { display: none; padding: 6px 12px; background: #151515; }
 .monitor.preview-maximized .preview-progress { display: flex; }
-#preview-progress { display: block; width: 100%; height: 16px; accent-color: var(--accent); cursor: pointer; }
+#preview-progress { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 18px; background: transparent; cursor: pointer; }
+#preview-progress::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: #3b4048; }
+#preview-progress::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; border: 2px solid var(--accent); background: #fff; box-shadow: 0 1px 3px #000a; }
 #preview-progress:disabled { cursor: default; opacity: .45; }
 .frame { position: relative; width: 100%; height: 100%; overflow: hidden; }
 .solid-frame { position: absolute; inset: 0; }
@@ -357,12 +359,19 @@ dialog h2 { margin: 0; font-size: 17px; font-weight: 650; }
 #export-track-summary { overflow-wrap: anywhere; }
 #about-dialog { width: 360px; }
 .about-wordmark { font: 750 25px/1 var(--system-font); letter-spacing: -1.5px; color: #c6e0ff; }
+.about-icon { width: 68px; height: 68px; border-radius: 16px; box-shadow: 0 8px 22px #0009; }
+.about-dev { color: #c8d2df; }
 .about-detail { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--control); border-radius: 5px; }
 #shortcuts-dialog { width: 380px; }
 .shortcut-list { display: grid; gap: 4px; margin: 0; }
 .shortcut-list div { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 6px 10px; background: var(--control); border-radius: 5px; }
 .shortcut-list dt { color: #d9dde2; }
-.shortcut-list dd { margin: 0; color: #aeb5bd; font: 11px var(--mono-font); }
+.shortcut-list { display: grid; gap: 2px; margin: 0; }
+.shortcut-list > div { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 5px 2px; border-bottom: 1px solid #2c2c2c; }
+.shortcut-list dt { color: #c9cdd3; }
+.shortcut-list dd { display: flex; align-items: center; gap: 4px; margin: 0; }
+.shortcut-list kbd { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 5px; border: 1px solid #4a4f57; border-bottom-width: 2px; background: linear-gradient(#34383e, #26292e); color: #e8ecf2; font: 600 11px var(--mono-font); }
+.shortcut-list .key-plus { color: var(--muted); font-size: 11px; }
 @media (max-width: 1090px) {
   .appbar { gap: 8px; }
   .menu-trigger { padding: 0 7px; }

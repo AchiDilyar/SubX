@@ -308,10 +308,11 @@
   </dialog>
   <dialog id="about-dialog" aria-labelledby="about-title">
     <form method="dialog">
-      <span class="about-wordmark" aria-hidden="true">SubX</span>
-      <h2 id="about-title">关于 SubX</h2>
+      <img class="about-icon" src="../assets/SubXIcon.png" alt="SubX 图标">
+      <h2 id="about-title">SubX</h2>
       <p class="dialog-description">多轨字幕编辑器。编排时间轴、校对双语字幕，并制作带字幕的视频。</p>
-      <div class="about-detail"><span>应用版本</span><output id="about-version"></output></div>
+      <div class="about-detail"><span>版本</span><output id="about-version"></output></div>
+      <div class="about-detail"><span>开发者</span><span class="about-dev">AchiDilyar</span></div>
       <div class="dialog-actions"><button autofocus>关闭</button></div>
     </form>
   </dialog>
@@ -319,16 +320,20 @@
     <form method="dialog">
       <h2 id="shortcuts-title">快捷键</h2>
       <dl class="shortcut-list">
-        <div><dt>播放 / 暂停</dt><dd>Space</dd></div>
-        <div><dt>新建工程</dt><dd>⌘N</dd></div>
-        <div><dt>打开工程</dt><dd>⌘O</dd></div>
-        <div><dt>保存 / 另存为</dt><dd>⌘S / ⇧⌘S</dd></div>
-        <div><dt>导入字幕</dt><dd>⌘I</dd></div>
-        <div><dt>导出字幕</dt><dd>⌘E</dd></div>
-        <div><dt>撤销 / 重做</dt><dd>⌘Z / ⇧⌘Z</dd></div>
-        <div><dt>删除字幕</dt><dd>Delete</dd></div>
-        <div><dt>时间标尺定位</dt><dd>← / →，Shift 加速</dd></div>
-        <div><dt>菜单浏览</dt><dd>方向键，Esc 关闭</dd></div>
+        <div><dt>播放 / 暂停</dt><dd><kbd>Space</kbd></dd></div>
+        <div><dt>新建工程</dt><dd><kbd>⌘</kbd><span class="key-plus">+</span><kbd>N</kbd></dd></div>
+        <div><dt>打开工程</dt><dd><kbd>⌘</kbd><span class="key-plus">+</span><kbd>O</kbd></dd></div>
+        <div><dt>保存 / 另存为</dt><dd><kbd>⌘</kbd><span class="key-plus">+</span><kbd>S</kbd><span class="key-plus">/</span><kbd>⇧</kbd><span class="key-plus">+</span><kbd>⌘</kbd><span class="key-plus">+</span><kbd>S</kbd></dd></div>
+        <div><dt>导入字幕</dt><dd><kbd>⌘</kbd><span class="key-plus">+</span><kbd>I</kbd></dd></div>
+        <div><dt>导出字幕</dt><dd><kbd>⌘</kbd><span class="key-plus">+</span><kbd>E</kbd></dd></div>
+        <div><dt>撤销 / 重做</dt><dd><kbd>⌘</kbd><span class="key-plus">+</span><kbd>Z</kbd><span class="key-plus">/</span><kbd>⇧</kbd><span class="key-plus">+</span><kbd>⌘</kbd><span class="key-plus">+</span><kbd>Z</kbd></dd></div>
+        <div><dt>全选当前轨道</dt><dd><kbd>⌘</kbd><span class="key-plus">+</span><kbd>A</kbd></dd></div>
+        <div><dt>复制 / 粘贴</dt><dd><kbd>⌘</kbd><span class="key-plus">+</span><kbd>C</kbd><span class="key-plus">/</span><kbd>⌘</kbd><span class="key-plus">+</span><kbd>V</kbd></dd></div>
+        <div><dt>删除选中字幕</dt><dd><kbd>Delete</kbd></dd></div>
+        <div><dt>移动播放头</dt><dd><kbd>←</kbd><span class="key-plus">/</span><kbd>→</kbd></dd></div>
+        <div><dt>快速移动播放头</dt><dd><kbd>Shift</kbd><span class="key-plus">+</span><kbd>←</kbd><span class="key-plus">/</span><kbd>→</kbd></dd></div>
+        <div><dt>缩放时间轴</dt><dd><kbd>+</kbd><span class="key-plus">/</span><kbd>−</kbd></dd></div>
+        <div><dt>菜单浏览</dt><dd><kbd>↑</kbd><kbd>↓</kbd><span class="key-plus">/</span><kbd>Esc</kbd></dd></div>
       </dl>
       <p class="dialog-description">Windows 与 Linux 上把 ⌘ 换成 Ctrl。</p>
       <div class="dialog-actions"><button autofocus>关闭</button></div>

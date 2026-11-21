@@ -177,9 +177,16 @@ export function writeAss(track, styles, fade = false, layer) {
 
   lines = withoutRemovedEvents(lines, track.cues)
 
-  const shared = applicableStyles(track, styles).filter(style => style.trackId === undefined)
+  const scriptNames = new Set()
+  for (const line of lines) {
+    const match = /^\s*Style:\s*([^,]*)/i.exec(line)
+    if (match) scriptNames.add(match[1].trim().toLowerCase())
+  }
+  const shared = applicableStyles(track, styles).filter(style => style.trackId === undefined &&
+    !scriptNames.has(field(style.fields, 'Name').trim().toLowerCase()))
   const needsDefault = track.cues.some(cue => cue.style === null || (!cue.ass && !cue.style))
-  if (needsDefault && ![...scoped, ...shared].some(style => field(style.fields, 'Name').trim().toLowerCase() === 'default')) {
+  if (needsDefault && !scriptNames.has('default') &&
+      ![...scoped, ...shared].some(style => field(style.fields, 'Name').trim().toLowerCase() === 'default')) {
     shared.unshift(newStyle())
   }
   if (shared.length) {
@@ -462,10 +469,30 @@ export function groupAssLayers(cues) {
   return groups
 }
 
-function adoptAssSource(track, ass, styles, projectStyles) {
+function adoptAssSource(track, ass, styles, projectStyles, project) {
   track.ass = { lines: [...ass.lines], resolution: ass.resolution, newline: ass.newline, sourceName: ass.sourceName, indexed: true }
   const ids = new Map()
   for (const style of styles) {
+    const name = field(style.fields, 'Name').trim().toLowerCase()
+    const existing = projectStyles.find(item => field(item.fields, 'Name').trim().toLowerCase() === name)
+    if (existing) {
+      // ASS 样式名唯一：同名样式用新定义覆盖，并改成全局样式供多条轨道共用。
+      // 原轨道与新轨道里的样式行都清空，导出时由共享样式统一写回，避免同名定义出现两次。
+      if (existing.trackId !== undefined) {
+        const owner = project.tracks.find(item => item.id === existing.trackId)
+        if (owner?.ass && Number.isSafeInteger(existing.line) && owner.ass.lines[existing.line] !== undefined) {
+          owner.ass.lines[existing.line] = ''
+        }
+      }
+      if (Number.isSafeInteger(style.line) && track.ass.lines[style.line] !== undefined) track.ass.lines[style.line] = ''
+      existing.fields = structuredClone(style.fields)
+      existing.trackId = undefined
+      delete existing.line
+      delete existing.prefix
+      delete existing.columns
+      ids.set(style.id, existing.id)
+      continue
+    }
     const id = crypto.randomUUID()
     ids.set(style.id, id)
     projectStyles.push({ ...structuredClone(style), id, trackId: track.id })
@@ -484,7 +511,7 @@ export function importAssLayers(project, ass, groups, sourceName) {
       const indices = new Map()
       const lines = withoutRemovedEvents(ass.lines, cues, indices)
       const scoped = ass.styles.map(style => ({ ...style, line: indices.get(style.line) }))
-      const ids = adoptAssSource(track, { ...ass, lines, sourceName }, scoped, project.styles)
+      const ids = adoptAssSource(track, { ...ass, lines, sourceName }, scoped, project.styles, project)
       track.cues = cues.map(cue => ({
         ...cue, id: crypto.randomUUID(), style: ids.get(cue.style), ass: { ...cue.ass, line: indices.get(cue.ass.line) },
       }))

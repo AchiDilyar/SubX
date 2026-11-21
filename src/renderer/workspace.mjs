@@ -84,6 +84,8 @@ function rulerFps() {
     const fps = Math.round(1000 / frameGap)
     if (fps >= 1 && fps <= 240) return fps
   }
+  // 空白工程没有媒体，用 30 fps 作为默认时间基准。
+  if (!project.media) return 30
   return null
 }
 function rulerSteps() {
@@ -721,6 +723,11 @@ function pauseSolidClock() {
 // 播放头始终落在时间轴的最小刻度上：有帧索引时按帧，否则按标尺最小刻度。
 function snapRulerTime(value) {
   if (frameTimes?.length) return Math.round(value)
+  const fps = rulerFps()
+  if (fps) {
+    const frame = 1000 / fps
+    return Math.round(Math.round(value / frame) * frame)
+  }
   const step = rulerMinor()
   return Math.round(value / step) * step
 }
@@ -1085,8 +1092,9 @@ function renderViewport() {
         block.replaceChildren(...(linked ? [icon('link'), label] : [label]))
       }
       const durationWidth = width(end - start)
-      block.title = title + '\n' + printTime(start, '.') + ' – ' + printTime(end, '.')
-      if (durationWidth < 14) block.title += '\n放大时间轴以拖动边缘，或编辑起止时间。'
+      block.title = displayText
+      block.setAttribute('aria-label', title)
+      block.dataset.range = printTime(start, '.') + ' – ' + printTime(end, '.')
       const isSelected = cue.id === selected || cue.id === linkStart || selectedCues.has(cue.id)
       block.classList.toggle('selected', isSelected)
       block.setAttribute('aria-pressed', String(isSelected))
@@ -1668,7 +1676,7 @@ function renderStyleList(projectChanged = false) {
       const controls = [...$('cue-form').querySelectorAll('input,textarea,select')]
       const textIndex = controls.indexOf($('cue-text'))
       const styleIndex = controls.indexOf($('cue-style'))
-      const renamingDefault = style.trackId !== undefined && previousName.toLowerCase() === 'default'
+      const renamingDefault = previousName.toLowerCase() === 'default'
       for (const cue of assStyleResetCues(project, style)) {
         const draft = cueDrafts.get(cue.id)
         const draftText = draft?.get(textIndex)
@@ -2667,32 +2675,54 @@ function deleteSelectedCue(id = selected) {
   status(deletable.length > 1 ? '已删除 ' + deletable.length + ' 条字幕，可撤销' : '已删除字幕，可撤销')
 }
 
+function selectedCueIds() {
+  const ids = new Set(selectedCues)
+  if (selected !== undefined) ids.add(selected)
+  return [...ids].filter(id => findCue(project, id))
+}
+
 function copyTimelineCue(owner, cue) {
-  clipboard = captureCue(owner, cue, project.styles)
+  clipboard = [{ captured: captureCue(owner, cue, project.styles), offset: 0 }]
   status('已复制字幕')
+}
+
+function copySelection() {
+  const cues = selectedCueIds().map(id => findCue(project, id))
+  if (!cues.length) return
+  const origin = Math.min(...cues.map(cue => cue.start))
+  clipboard = cues.map(cue => ({
+    captured: captureCue(trackFor(cue.id), cue, project.styles),
+    offset: cue.start - origin,
+  }))
+  status(cues.length > 1 ? '已复制 ' + cues.length + ' 条字幕' : '已复制字幕')
 }
 
 function pasteTimelineCue() {
   const target = track()
-  if (!target || !clipboard || drag || switchingProject) return
+  if (!target || !clipboard?.length || drag || switchingProject) return
   if (target.locked) {
     status('轨道已锁定，解锁后可粘贴')
     return
   }
   if (linkMode) setLinkMode(false)
   pausePlayback()
+  const at = Math.round(playheadPosition())
+  const created = []
   edit(() => {
-    const cue = pasteCue(target, clipboard, Math.round(playheadPosition()), project.styles)
-    Object.assign(cue, alignCue(editingBoundaries(), cue.start, cue.end))
-    target.cues.push(cue)
-    selected = cue.id
-    selectedCues.clear()
+    for (const { captured, offset } of clipboard) {
+      const cue = pasteCue(target, captured, at + offset, project.styles)
+      Object.assign(cue, alignCue(editingBoundaries(), cue.start, cue.end))
+      target.cues.push(cue)
+      created.push(cue.id)
+    }
+    selected = created[0]
+    selectedCues = new Set(created)
   })
   revealTimelinePosition(time)
   renderViewport()
-  const block = rows.find(row => row.track === target)?.buttons.get(selected)
+  const block = rows.find(row => row.track === target)?.buttons.get(created[0])
   block?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  focusTimelineCue(selected)
+  focusTimelineCue(created[0])
   status('已粘贴字幕到「' + trackLabel(target) + '」')
 }
 
@@ -2702,6 +2732,7 @@ function selectTrackCues() {
   if (linkMode) setLinkMode(false)
   selectedCues = new Set(owner.cues.map(cue => cue.id))
   selected = undefined
+  refreshTrackControls()
   renderCueForm()
   refreshInspectorPreview()
   renderViewport()
@@ -3054,6 +3085,33 @@ action('fullscreen-preview', () => setPreviewMaximized(!monitor.classList.contai
 $('preview-progress').addEventListener('input', event => {
   if (mediaDuration && hasPicture()) seek(snapPlayheadTime(mediaDuration * Number(event.target.value) / 1000))
 })
+// 原生 range 在隐藏窗口/自定义外观下拖动不稳定，这里自己按指针位置定位。
+const progressInput = $('preview-progress')
+function seekFromProgress(event) {
+  const box = progressInput.getBoundingClientRect()
+  if (!box.width || !mediaDuration || !hasPicture()) return
+  const fraction = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width))
+  seek(snapPlayheadTime(mediaDuration * fraction))
+}
+progressInput.addEventListener('pointerdown', event => {
+  if (event.button !== 0 || !mediaDuration || !hasPicture()) return
+  event.preventDefault()
+  progressInput.dataset.dragging = 'true'
+  progressInput.setPointerCapture(event.pointerId)
+  seekFromProgress(event)
+})
+progressInput.addEventListener('pointermove', event => {
+  if (progressInput.dataset.dragging !== 'true') return
+  seekFromProgress(event)
+})
+function endProgressDrag(event) {
+  if (progressInput.dataset.dragging !== 'true') return
+  delete progressInput.dataset.dragging
+  if (progressInput.hasPointerCapture?.(event.pointerId)) progressInput.releasePointerCapture(event.pointerId)
+}
+progressInput.addEventListener('pointerup', endProgressDrag)
+progressInput.addEventListener('pointercancel', endProgressDrag)
+progressInput.addEventListener('lostpointercapture', () => { delete progressInput.dataset.dragging })
 function syncPlayback() {
   const paused = playbackPaused()
   $('play').replaceChildren(icon(paused ? 'play' : 'pause'))
@@ -3340,16 +3398,15 @@ window.addEventListener('keydown', event => {
     }
   }
   if (event.target.closest?.('input,textarea,select,dialog')) return
-  if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.target.closest?.('.timeline')) {
+  if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) {
     const key = event.key.toLowerCase()
-    const cue = findCue(project, selected)
-    if (key === 'c' && cue) {
+    if (key === 'c') {
       event.preventDefault()
-      copyTimelineCue(trackFor(cue.id), cue)
-    } else if (key === 'v' && clipboard && track()) {
+      copySelection()
+    } else if (key === 'v') {
       event.preventDefault()
       pasteTimelineCue()
-    } else if (key === 'a' && track()?.cues.length) {
+    } else if (key === 'a') {
       event.preventDefault()
       selectTrackCues()
     }
@@ -3360,7 +3417,8 @@ window.addEventListener('keydown', event => {
     else restore(undo, redo)
   }
   if ((event.key === 'Delete' || event.key === 'Backspace') && !event.repeat &&
-      !event.metaKey && !event.ctrlKey && !event.altKey && findCue(project, selected)) {
+      !event.metaKey && !event.ctrlKey && !event.altKey &&
+      (findCue(project, selected) || selectedCues.size)) {
     event.preventDefault()
     deleteSelectedCue()
   }
@@ -3474,6 +3532,7 @@ function startZoomDrag(event, kind, edge) {
     barWidth: zoomBar.clientWidth,
     travel: zoomBar.clientWidth - zoomThumb.offsetWidth,
     duration: fitDuration(),
+    contentDuration: timelineEnd() + timelineTail,
     usable,
     maxScroll,
     anchor: zoomAnchor(),
@@ -3495,6 +3554,48 @@ for (const grip of zoomBar.querySelectorAll('.zoom-grip')) {
   })
 }
 
+// 缩放拖动的目标：让被拖的把柄始终跟着指针走。用与 renderZoomBar 相同的布局公式
+// 反解缩放倍率，先粗扫再局部细化，避免滚动锚点带来的非线性偏差。
+function zoomGripAt(span) {
+  const { usable, barWidth, duration, contentDuration, anchor, edge } = zoomDrag
+  if (span >= duration - .001) return edge === 'left' ? 0 : barWidth
+  const pxPerSecond = usable * 1000 / span
+  const thumbWidth = Math.min(barWidth - 1, Math.max(24, Math.floor(usable / (duration * pxPerSecond / 1000) * barWidth)))
+  const contentWidth = Math.max(usable, contentDuration * pxPerSecond / 1000)
+  const maxScroll = Math.max(0, contentWidth - usable)
+  const scrollLeft = Math.max(0, anchor.time * pxPerSecond / 1000 - anchor.offset)
+  const thumbLeft = maxScroll > 0 ? (barWidth - thumbWidth) * Math.min(1, scrollLeft / maxScroll) : 0
+  return edge === 'left' ? thumbLeft : thumbLeft + thumbWidth
+}
+function zoomSpanForGrip(dx) {
+  const { startSpan, duration, usable } = zoomDrag
+  const target = zoomGripAt(startSpan) + dx
+  const minSpan = usable * 1000 / zoomBounds(usable).max
+  let best = startSpan
+  let bestError = Infinity
+  const steps = 96
+  for (let index = 0; index <= steps; index++) {
+    const span = minSpan + (duration - minSpan) * index / steps
+    const error = Math.abs(zoomGripAt(span) - target)
+    if (error < bestError) {
+      bestError = error
+      best = span
+    }
+  }
+  let step = (duration - minSpan) / steps
+  for (let round = 0; round < 10; round++) {
+    step /= 2
+    for (const span of [best - step, best + step]) {
+      if (span < minSpan || span > duration) continue
+      const error = Math.abs(zoomGripAt(span) - target)
+      if (error < bestError) {
+        bestError = error
+        best = span
+      }
+    }
+  }
+  return best
+}
 function pointerZoomMove(event) {
   if (!zoomDrag || event.pointerId !== zoomDrag.pointer) return
   const dx = event.clientX - zoomDrag.startX
@@ -3502,11 +3603,8 @@ function pointerZoomMove(event) {
     if (zoomDrag.travel > 0) scroll.scrollLeft = zoomDrag.startScroll + dx * zoomDrag.maxScroll / zoomDrag.travel
     return
   }
-  const { startSpan, startLeft, duration, barWidth, usable, edge } = zoomDrag
-  const change = dx * duration / barWidth * (edge === 'left' ? -1 : 1)
-  const minSpan = usable * 1000 / zoomBounds(usable).max
-  const span = Math.max(minSpan, Math.min(duration, startSpan + change))
-  setZoom(usable * 1000 / span, zoomDrag.anchor.time, zoomDrag.anchor.offset)
+  const { usable } = zoomDrag
+  setZoom(usable * 1000 / zoomSpanForGrip(dx), zoomDrag.anchor.time, zoomDrag.anchor.offset)
 }
 
 function endZoomDrag(event) {

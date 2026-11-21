@@ -97,6 +97,7 @@ async function run() {
   }
 
   await expect('document.getElementById("ruler").children.length > 0', 'load Electron workspace')
+  assert.equal(await exec('document.querySelector("#timecode").value'), '00:00:00.00', 'Use a 30 fps timebase for empty projects')
   assert.equal(await exec('getComputedStyle(document.querySelector("#styles-tab .icon")).color'), 'rgb(255, 255, 255)', 'Show the active tab icon in white')
   await click('settings-tab')
   assert.equal(await exec('getComputedStyle(document.querySelector("#settings-tab .icon")).color'), 'rgb(255, 255, 255)', 'Show the other active tab icon in white')
@@ -141,6 +142,7 @@ async function run() {
   await click('menu-about')
   await click('menu-shortcuts')
   await expect('document.querySelector("#shortcuts-dialog").open', 'open the shortcuts window from the about menu')
+  await expect('document.querySelectorAll("#shortcuts-dialog kbd").length >= 10 && document.querySelector("#shortcuts-dialog").textContent.includes("Space")', 'show shortcut keys as keycaps')
   await exec('document.querySelector("#shortcuts-dialog button").click()')
   await expect('!document.querySelector("#shortcuts-dialog").open && document.querySelector("#menu-about-popup").hidden', 'close the shortcuts window and its menu')
   assert(await exec('document.querySelector("#open-media").closest(".monitor") === null'), 'Remove the open-video button from the preview panel')
@@ -363,7 +365,7 @@ async function run() {
   await contents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] })
   await expect('!document.querySelector("#menu-preferences, #preferences-dialog, #ui-font-form")', 'remove the old interface font preference')
   await click('about-app')
-  await expect("document.querySelector('#about-dialog').open && document.querySelector('#about-version').textContent.length > 0", 'show the running app version')
+  await expect("document.querySelector('#about-dialog').open && document.querySelector('#about-version').textContent.length > 0 && document.querySelector('#about-dialog img.about-icon')?.complete && document.querySelector('#about-dialog').textContent.includes('AchiDilyar')", 'show the app icon, version and developer')
   await exec("document.querySelector('#about-dialog button').click()")
   await click('styles-tab')
   await expect(`(() => {
@@ -373,7 +375,7 @@ async function run() {
     const first = rows[0].getBoundingClientRect()
     const last = rows[1].getBoundingClientRect()
     return rows.length === 2 && Math.abs(center(lanes.getBoundingClientRect()) - (first.top + last.bottom) / 2) <= 1 &&
-      Array.from(document.querySelectorAll('.tick')).at(-1).textContent === '00:00:10' &&
+      Array.from(document.querySelectorAll('.tick')).at(-1).textContent === '00:00:10.00' &&
       document.querySelector('.style-list-item').title === '默认样式'
   })()`, 'center two starter tracks and end the empty ruler at ten seconds')
   await exec('document.querySelector(".style-list-item [aria-label=复制]").click()')
@@ -835,9 +837,9 @@ async function run() {
   await mouse('mouseReleased', snapPoint.x, snapPoint.y)
   await expect('document.activeElement === document.querySelector("#snap-tool")', 'keep focus on a pointer-clicked toolbar button for this check')
   const snapPressed = await exec('document.querySelector("#snap-tool").getAttribute("aria-pressed")')
-  const pressShortcut = async (key, code, windowsVirtualKeyCode) => {
-    await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code, windowsVirtualKeyCode })
-    await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode })
+  const pressShortcut = async (key, code, windowsVirtualKeyCode, modifiers = 0) => {
+    await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code, windowsVirtualKeyCode, modifiers })
+    await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode, modifiers })
   }
   await pressShortcut(' ', 'Space', 32)
   await delay(300)
@@ -878,6 +880,19 @@ async function run() {
   await mouse('mouseMoved', grip.x + 80, grip.y)
   await mouse('mouseReleased', grip.x + 80, grip.y)
   assert(await exec(`Number(document.querySelector("#zoom").value) < ${zoomBefore}`), 'Zoom out by dragging the scrollbar grip')
+  // 拖动缩放把柄时把柄跟手
+  const gripTrack = await exec(`(() => {
+    const grip = document.querySelector('#zoom-thumb .zoom-grip[data-edge=right]').getBoundingClientRect()
+    return { x: grip.left + grip.width / 2, y: grip.top + grip.height / 2 }
+  })()`)
+  await mouse('mousePressed', gripTrack.x, gripTrack.y)
+  await mouse('mouseMoved', gripTrack.x - 40, gripTrack.y)
+  await mouse('mouseReleased', gripTrack.x - 40, gripTrack.y)
+  const gripAfter = await exec(`(() => {
+    const grip = document.querySelector('#zoom-thumb .zoom-grip[data-edge=right]').getBoundingClientRect()
+    return grip.left + grip.width / 2
+  })()`)
+  assert(Math.abs(gripAfter - (gripTrack.x - 40)) <= 3, 'Keep the zoom handle under the pointer while dragging: ' + JSON.stringify({ before: gripTrack.x, after: gripAfter }))
   await exec('document.querySelector("#timeline-scroll").scrollLeft = 0')
   await expect('document.querySelector("#zoom-thumb").getBoundingClientRect().x <= 210', 'settle the scrollbar thumb after resetting the scroll')
   // 缩放条被点过之后，方向键仍然移动播放头，不再平移时间轴。
@@ -917,6 +932,27 @@ async function run() {
   await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.00"', 'restore the timeline after keyboard seeking')
   await exec('for (const value of ["2", "4", "1"]) { const q = document.querySelector("#quality"); q.value = value; q.dispatchEvent(new Event("change")); const c = document.querySelector("canvas"); if (value === "1" ? !c.hidden : c.width !== 3840 / +value || c.height !== 2160 / +value) throw Error("quality width"); }')
   console.log('PASS switch 4K preview targets 3840x2160, 1920x1080, 960x540')
+  // 全屏预览进度条可以拖动，把柄是白底蓝边
+  await exec('document.querySelector("#fullscreen-preview").click()')
+  await expect('document.querySelector(".monitor").classList.contains("preview-maximized")', 'maximize the preview for the progress bar check')
+  const progressBar = await exec(`(() => {
+    const input = document.querySelector('#preview-progress')
+    const box = input.getBoundingClientRect()
+    return { x: box.left + box.width * .2, y: box.top + box.height / 2, end: box.left + box.width * .7 }
+  })()`)
+  await mouse('mousePressed', progressBar.x, progressBar.y)
+  await mouse('mouseMoved', progressBar.end, progressBar.y)
+  await mouse('mouseReleased', progressBar.end, progressBar.y)
+  await delay(300)
+  const progressState = await exec(`({
+    value: document.querySelector('#preview-progress').value,
+    time: document.querySelector('video').currentTime,
+    duration: document.querySelector('video').duration,
+    seeking: document.querySelector('video').seeking,
+  })`)
+  assert(progressState.time > 2, 'Drag the fullscreen progress bar: ' + JSON.stringify(progressState))
+  await exec('document.querySelector("#fullscreen-preview").click()')
+  await expect('!document.querySelector(".monitor").classList.contains("preview-maximized")', 'leave the fullscreen preview')
   await writeFile(join(directory, 'broken-encoding.srt'), Buffer.from([0xff, 0xfe, 0x31]))
   await click('import-subtitles')
   await expect('document.querySelector("#status").textContent.includes("UTF-8") && document.querySelectorAll(".track-lane").length === 2', 'reject a truncated Unicode subtitle without adding a track')
@@ -1037,7 +1073,7 @@ async function run() {
   await mouse('mouseMoved', rulerPoint.x + 2 * rulerPoint.scale, rulerPoint.y)
   await mouse('mouseReleased', rulerPoint.x + 2 * rulerPoint.scale, rulerPoint.y)
   await expect('Math.abs(document.querySelector("video").currentTime - 2) < 0.03', 'drag ruler with the default cursor')
-  const point = await exec('(() => { const cue = Array.from(document.querySelectorAll(".cue")).find(item => item.title.startsWith("你好")); const r = cue.getBoundingClientRect(); return {x: r.left + 20, y: r.top + 10}; })()')
+  const point = await exec('(() => { const cue = Array.from(document.querySelectorAll(".cue")).find(item => item.textContent.includes("你好")); const r = cue.getBoundingClientRect(); return {x: r.left + 20, y: r.top + 10}; })()')
   await mouse('mousePressed', point.x, point.y)
   await mouse('mouseMoved', point.x + 282 * rulerPoint.scale / 94, point.y)
   await expect('document.querySelectorAll(".caption").length === 0 && document.querySelector("#drag-overlap").hidden', 'leave the overlap warning hidden outside another cue')
@@ -1405,18 +1441,19 @@ async function run() {
   await click('import-subtitles')
   await expect('document.querySelectorAll(".ass-layer:not(.generated-layer)[data-ready=true]").length === 2', 'import a second ASS with the same style names')
   await click('styles-tab')
+  await expect(`(() => {
+    const rows = [...document.querySelectorAll('.style-list-item')]
+    const defaults = rows.filter(row => row.title === 'Default')
+    const notes = rows.filter(row => row.title === 'Notes')
+    return defaults.length === 1 && notes.length === 1 && !rows.some(row => row.querySelector('.style-list-source'))
+  })()`, 'overwrite same-name styles instead of listing duplicates')
   await exec(`(() => {
-    const defaults = Array.from(document.querySelectorAll('.style-list-item')).filter(row => row.title.startsWith('Default ·'))
-    if (!defaults[0].querySelector('.style-list-source')?.textContent.endsWith(' · styles.ass') ||
-        !defaults[1].querySelector('.style-list-source')?.textContent.endsWith(' · other-styles.ass')) {
-      throw Error('Identical style names should show their source tracks')
-    }
-    defaults[1].querySelector('[aria-label=编辑]').click()
+    [...document.querySelectorAll('.style-list-item')].find(row => row.title === 'Default').querySelector('[aria-label=编辑]').click()
     const name = document.querySelector('#style-editor input[type=text]')
     name.value = 'Notes'
     name.form.requestSubmit()
   })()`)
-  await expect('document.querySelector("#status").textContent.includes("已使用这个名称")', 'reject duplicate style names within one ASS track')
+  await expect('document.querySelector("#status").textContent.includes("已使用这个名称")', 'reject duplicate style names after merging')
   await exec(`(() => {
     const name = document.querySelector('#style-editor input[type=text]')
     const size = document.querySelector('#style-editor input[type=number]')
@@ -1424,19 +1461,23 @@ async function run() {
     size.value = '64'
     size.form.requestSubmit()
   })()`)
-  await expect('document.querySelector("#status").textContent === "已保存样式"', 'edit a style whose name also appears in another ASS track')
+  await expect('document.querySelector("#status").textContent === "已保存样式"', 'edit the merged ASS style')
   await chooseExport('ass')
   await expect('document.querySelector("#status").textContent === "已导出 ASS"', 'export the edited second ASS track')
-  assert.equal(await readFile(join(directory, 'other.ass'), 'utf8'), otherAss.replace('Noto Sans SC,56,', 'Noto Sans SC,64,'))
+  const otherExport = await readFile(join(directory, 'other.ass'), 'utf8')
+  assert.match(otherExport, /Style: Default,Noto Sans SC,64,/, 'Write the overwritten style into the second track')
+  assert.match(otherExport, /Comment retained/)
   await exec("Array.from(document.querySelectorAll('.track-name')).find(button => button.title === 'styles.ass').click()")
   await exec("document.querySelector('#status').textContent = ''")
   await chooseExport('ass')
-  await expect('document.querySelector("#status").textContent === "已导出 ASS"', 'export the first ASS track after editing the second')
-  assert.equal(await readFile(join(directory, 'first.ass'), 'utf8'), mutated)
+  await expect('document.querySelector("#status").textContent === "已导出 ASS"', 'export the first ASS track after editing the merged style')
+  const firstExport = await readFile(join(directory, 'first.ass'), 'utf8')
+  assert.match(firstExport, /Style: Default,Noto Sans SC,64,/, 'Apply the overwritten style to the first track too')
+  assert.match(firstExport, /Comment retained/)
   const renameNotes = `(() => {
     Array.from(document.querySelectorAll('.track-name')).find(button => button.title === 'other-styles.ass').click()
     document.querySelector('#style-editor [aria-label=返回样式列表]')?.click()
-    Array.from(document.querySelectorAll('.style-list-item')).find(button => button.title.startsWith('Notes ·') && button.title.endsWith('other-styles.ass')).querySelector('[aria-label=编辑]').click()
+    Array.from(document.querySelectorAll('.style-list-item')).find(button => button.title === 'Notes').querySelector('[aria-label=编辑]').click()
     const name = document.querySelector('#style-editor input[type=text]')
     name.value = 'Review Notes'
     name.form.requestSubmit()
@@ -1463,8 +1504,9 @@ async function run() {
   await expect(blueAssPixels, 'redo the style name and override together')
   await chooseExport('ass')
   await expect('document.querySelector("#status").textContent === "已导出 ASS"', 'export the renamed inline style')
-  assert.equal(await readFile(join(directory, 'renamed.ass'), 'utf8'), otherAss
-    .replace('Noto Sans SC,56,', 'Noto Sans SC,64,').replace('Style: Notes,', 'Style: Review Notes,').replace('\\rNotes}', '\\rReview Notes}'))
+  const renamed = await readFile(join(directory, 'renamed.ass'), 'utf8')
+  assert.match(renamed, /Style: Review Notes,Noto Sans SC,48,/)
+  assert(renamed.includes('Review Notes}'), 'Rename the inline style override too')
   await exec(`(() => {
     const canvas = Array.from(document.querySelectorAll('.ass-layer:not(.generated-layer)')).at(-1)
     canvas.dataset.ready = 'false'
@@ -1487,7 +1529,7 @@ async function run() {
   await click('styles-tab')
   await exec(`(() => {
     document.querySelector('#style-editor [aria-label=返回样式列表]')?.click()
-    Array.from(document.querySelectorAll('.style-list-item')).find(button => button.title.startsWith('Default ·') && button.title.endsWith('other-styles.ass')).querySelector('[aria-label=编辑]').click()
+    Array.from(document.querySelectorAll('.style-list-item')).find(button => button.title === 'Default').querySelector('[aria-label=编辑]').click()
     const name = document.querySelector('#style-editor input[type=text]')
     name.value = 'Review Main'
     name.form.requestSubmit()
@@ -1585,9 +1627,13 @@ async function run() {
   await mouse('mousePressed', emptyRuler.x, emptyRuler.y)
   await mouse('mouseReleased', emptyRuler.x, emptyRuler.y)
   await expect(`(() => {
-    const head = document.querySelector('#playhead').style.left
-    return Boolean(head) && [...document.querySelectorAll('#ruler .tick')].some(tick => tick.style.left === head)
-  })()`, 'land the playhead on the smallest ruler tick without a frame index')
+    const [hours, minutes, rest] = document.querySelector('#timecode').value.split(':')
+    const [seconds, frames] = rest.split('.')
+    const count = ((Number(hours) * 60 + Number(minutes)) * 60 + Number(seconds)) * 30 + Number(frames)
+    const scale = Number(document.querySelector('#zoom').value)
+    const expected = count * (1000 / 30) * scale / 1000
+    return Math.abs(parseFloat(document.querySelector('#playhead').style.left) - expected) < 1
+  })()`, 'land the playhead on a 30 fps frame in an empty project')
 
   await click('blank-video')
   await expect('document.querySelector("#blank-video-dialog").open', 'open the blank video dialog')
@@ -1673,7 +1719,7 @@ async function run() {
   await delay(350)
   await pressPunch('keyUp', 'k')
   await expect('document.querySelectorAll(".track-lane:first-child .cue").length === 2 && document.querySelector("#script-progress").textContent.startsWith("2 / 3")', 'punch two lines with alternating J and K')
-  const punchTimes = await exec(`[...document.querySelectorAll('.track-lane:first-child .cue')].map(cue => cue.title.split('\\n').find(line => /^\\d\\d:\\d\\d:\\d\\d\\.\\d\\d\\d – /.test(line)))`)
+  const punchTimes = await exec(`[...document.querySelectorAll('.track-lane:first-child .cue')].map(cue => cue.dataset.range)`)
   const [[firstStart, firstEnd], [secondStart, secondEnd]] = punchTimes.map(range => range.split(' – '))
   assert.equal(firstEnd, secondStart, 'Join the next punched line exactly at the previous end: ' + JSON.stringify(punchTimes))
   assert(ms(firstEnd) - ms(firstStart) >= 200 && ms(secondEnd) - ms(secondStart) >= 200, 'Size each punched block by how long the key was held: ' + JSON.stringify(punchTimes))
@@ -1718,6 +1764,7 @@ async function run() {
   await expect('document.querySelectorAll(".track-lane").length === 1', 'import independent bottom SRT')
   await click('import-subtitles')
   await expect('document.querySelectorAll(".track-lane").length === 2', 'import UTF-16BE independent top SRT')
+  assert(await exec('!document.querySelector(".cue").title.includes(" – ") && document.querySelector(".cue").dataset.range.includes(" – ")'), 'Show only the cue text in the hover tooltip')
   const topCue = '.track-lane:first-child .cue:first-child'
   const extraCue = '.track-lane:first-child .cue:nth-child(2)'
   const bottomCue = '.track-lane:last-child .cue'
@@ -1735,16 +1782,16 @@ async function run() {
   await toggleBottom()
   assert.equal(await exec('getComputedStyle(document.querySelector(".track-lane:last-child .cue")).opacity'), '0.3', 'Dim the subtitle blocks of a hidden track')
   const hiddenEdge = await startEdge()
-  await expect(`document.querySelector(${JSON.stringify(topCue)}).title.includes('00:00:01.170') && document.querySelector('#snap-guide')?.hidden !== false`, 'ignore a hidden track while snapping an edge')
+  await expect(`document.querySelector(${JSON.stringify(topCue)}).dataset.range.includes('00:00:01.170') && document.querySelector('#snap-guide')?.hidden !== false`, 'ignore a hidden track while snapping an edge')
   await mouse('mouseReleased', hiddenEdge.x + hiddenEdge.delta, hiddenEdge.y)
   await click('undo')
   await toggleBottom()
   const visibleEdge = await startEdge()
-  await expect(`document.querySelector(${JSON.stringify(topCue)}).title.includes('00:00:01.200') &&
+  await expect(`document.querySelector(${JSON.stringify(topCue)}).dataset.range.includes('00:00:01.200') &&
     document.querySelector('#snap-guide')?.hidden === false && document.querySelector('#snap-guide').style.left === document.querySelector(${JSON.stringify(bottomCue)}).style.left`, 'align to a visible cue and show the snap guide')
   await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
   await mouse('mouseReleased', visibleEdge.x + visibleEdge.delta, visibleEdge.y)
-  await expect(`document.querySelector(${JSON.stringify(topCue)}).title.includes('00:00:01.000') && document.querySelector('#snap-guide').hidden`, 'cancel a snapped trim and clear the guide')
+  await expect(`document.querySelector(${JSON.stringify(topCue)}).dataset.range.includes('00:00:01.000') && document.querySelector('#snap-guide').hidden`, 'cancel a snapped trim and clear the guide')
   await toggleBottom()
   await exec(`(() => {
     const ruler = document.querySelector('#ruler')
@@ -1752,9 +1799,9 @@ async function run() {
       ruler.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey, bubbles: true, cancelable: true }))
     }
   })()`)
-  await expect('document.querySelector("#timecode").value === "00:00:01.200"', 'set the playhead as a snap target')
+  await expect('document.querySelector("#timecode").value === "00:00:01.06"', 'set the playhead as a snap target')
   const playheadEdge = await startEdge()
-  await expect(`document.querySelector(${JSON.stringify(topCue)}).title.includes('00:00:01.200') &&
+  await expect(`document.querySelector(${JSON.stringify(topCue)}).dataset.range.includes('00:00:01.200') &&
     !document.querySelector('#snap-guide').hidden && document.querySelector('#snap-guide').style.left === document.querySelector('#playhead').style.left`, 'snap to the playhead with the other track hidden')
   await mouse('mouseReleased', playheadEdge.x + playheadEdge.delta, playheadEdge.y)
   await expect('document.querySelector("#cue-start").value === "00:00:01.200" && document.querySelector("#snap-guide").hidden', 'commit exact snapped time and clear the guide')
@@ -1772,7 +1819,7 @@ async function run() {
   await pressCue(topCue)
   await expect('document.querySelector("#status").textContent === "已建立链接" && Boolean(document.querySelector(".cue.paired"))', 'link offset cues on two tracks')
 
-  const timesOf = async selector => (await exec('document.querySelector(' + JSON.stringify(selector) + ').title')).split('\n').at(-1)
+  const timesOf = async selector => await exec('document.querySelector(' + JSON.stringify(selector) + ').dataset.range')
   const moveTopHalfSecond = async () => {
     const center = await exec(`(() => {
       const bounds = document.querySelector(${JSON.stringify(topCue)}).getBoundingClientRect()
@@ -1886,7 +1933,7 @@ async function run() {
   await mouse('mouseReleased', marquee.endX, marquee.endY)
   await expect(`document.querySelectorAll('.cue.selected').length === ${marquee.expected} && ${marquee.expected} > 1`, 'select subtitle blocks by dragging in an empty timeline area')
   await menuCommand('#ruler', '粘贴字幕到当前轨道')
-  await expect(`document.querySelector('.track-lane:last-child .cue.selected').title.endsWith('00:00:01.200 – 00:00:03.200')`, 'paste at the playhead into the selected track with the original duration')
+  await expect(`document.querySelector('.track-lane:last-child .cue.selected').dataset.range === '00:00:01.200 – 00:00:03.200'`, 'paste at the playhead into the selected track with the original duration')
   await menuCommand('.cue.selected', '删除字幕')
   await expect('document.querySelectorAll(".track-lane:last-child .cue").length === 1', 'delete a subtitle using its context menu')
   await click('undo')
@@ -1902,6 +1949,26 @@ async function run() {
   await click('undo')
   assert.equal(await timesOf(topCue), '00:00:02.000 – 00:00:04.000')
   assert.equal(await timesOf(extraCue), '00:00:04.000 – 00:00:04.800')
+  // 快捷键：全选、复制、粘贴、删除
+  const modifier = process.platform === 'darwin' ? 4 : 2
+  await pressShortcut('a', 'KeyA', 65, modifier)
+  await expect('document.querySelectorAll(".cue.selected").length === 2', 'select all cues in the track with the keyboard')
+  await pressShortcut('c', 'KeyC', 67, modifier)
+  await expect('document.querySelector("#status").textContent.includes("已复制")', 'copy the selection with the keyboard')
+  await pressShortcut('v', 'KeyV', 86, modifier)
+  await expect('document.querySelectorAll(".track-lane:first-child .cue").length === 4', 'paste the copied cues with the keyboard')
+  await pressShortcut('z', 'KeyZ', 90, modifier)
+  await expect('document.querySelectorAll(".track-lane:first-child .cue").length === 2', 'undo the keyboard paste with the shortcut')
+  await pressShortcut('a', 'KeyA', 65, modifier)
+  await exec('document.querySelector("#timeline-delete").click()')
+  await expect('document.querySelectorAll(".track-lane:first-child .cue").length === 0', 'delete the selected cues from the timeline toolbar')
+  await click('undo')
+  await expect('document.querySelectorAll(".track-lane:first-child .cue").length === 2', 'undo the toolbar deletion')
+  await pressShortcut('a', 'KeyA', 65, modifier)
+  await pressShortcut('Delete', 'Delete', 46)
+  await expect('document.querySelectorAll(".track-lane:first-child .cue").length === 0', 'delete the selected cues with the keyboard')
+  await click('undo')
+  await expect('document.querySelectorAll(".track-lane:first-child .cue").length === 2', 'undo the keyboard deletion')
   const emptyClick = await exec(`(() => {
     const area = document.querySelector('#timeline-scroll').getBoundingClientRect()
     const lanes = document.querySelector('#track-lanes').getBoundingClientRect()
@@ -1909,6 +1976,7 @@ async function run() {
   })()`)
   await mouse('mousePressed', emptyClick.x, emptyClick.y)
   await mouse('mouseReleased', emptyClick.x, emptyClick.y)
+  await expect('document.querySelectorAll(".cue.selected").length === 0', 'deselect subtitles by clicking an empty timeline area')
   await expect('document.querySelectorAll(".cue.selected").length === 0', 'deselect subtitles by clicking an empty timeline area')
   const renamePoint = await exec(`(() => {
     const box = document.querySelector('.track-heading:first-child .track-name').getBoundingClientRect()
