@@ -110,6 +110,21 @@ function rulerSteps() {
 function rulerMinor() {
   return rulerSteps().minor
 }
+// 返回最后一条 start <= time 的下标；数组按 start 升序。
+function lastCueStartingAt(ordered, time) {
+  let low = 0
+  let high = ordered.length - 1
+  let found = -1
+  while (low <= high) {
+    const mid = (low + high) >> 1
+    if (ordered[mid].start <= time) {
+      found = mid
+      low = mid + 1
+    } else high = mid - 1
+  }
+  return found
+}
+
 // 预览时间码：有帧率时显示「时:分:秒.帧」，没有帧率时退回毫秒。
 function printTimecode(milliseconds) {
   const fps = rulerFps()
@@ -592,15 +607,29 @@ function updatePreview() {
     if (!row.track.visible) continue
     const layerId = row.track.ass ? row.track.id : 'plain-subtitles'
     if (assPreview.ready(layerId) || assPreview.pending(layerId)) continue
-    for (const cue of row.ordered) {
-      if (cue.start > captionTime + (drag ? Math.abs(drag.delta) : 0)) break
-      const { start, end } = cueTiming(cue, drag)
-      if (start <= captionTime && end > captionTime) {
-        const style = previewStyles.find(style => style.id === cue.style) ??
-          (row.track.ass ? fallbackAssStyle(row.track, cue, previewStyles) : previewStyles.find(style => style.isProjectDefault))
-        const text = previewCueText?.id === cue.id ? previewCueText.text : cue.text
-        if (text) captions.push({ text, style, source: row.track.ass })
+    // 播放时每帧都会走到这里：按 start 二分定位，只回看最长一条字幕的跨度，
+    // 避免几千条字幕时每帧整表扫描。
+    const visible = []
+    if (drag) {
+      for (const cue of row.ordered) {
+        if (cue.start > captionTime + Math.abs(drag.delta)) break
+        const { start, end } = cueTiming(cue, drag)
+        if (start <= captionTime && end > captionTime) visible.push(cue)
       }
+    } else {
+      const span = row.maxSpan ?? 0
+      for (let index = lastCueStartingAt(row.ordered, captionTime); index >= 0; index--) {
+        const cue = row.ordered[index]
+        if (cue.start < captionTime - span) break
+        if (cue.end > captionTime) visible.push(cue)
+      }
+      visible.reverse()
+    }
+    for (const cue of visible) {
+      const style = previewStyles.find(style => style.id === cue.style) ??
+        (row.track.ass ? fallbackAssStyle(row.track, cue, previewStyles) : previewStyles.find(style => style.isProjectDefault))
+      const text = previewCueText?.id === cue.id ? previewCueText.text : cue.text
+      if (text) captions.push({ text, style, source: row.track.ass })
     }
   }
   const key = JSON.stringify([frame.clientHeight, captions.map(({ text, style, source }) => [
@@ -862,18 +891,16 @@ function drawWaveform(usable) {
 
 function laneLayout(track) {
   const ordered = [...track.cues].sort((left, right) => left.start - right.start || left.end - right.end)
-  const laneEnds = []
   const laneById = new Map()
   let end = 0
+  let maxSpan = 0
+  // 一条轨道只有一行：重叠的字幕块横向叠在同一行里，不再上下排成多行。
   for (const cue of ordered) {
-    const free = laneEnds.findIndex(limit => limit <= cue.start)
-    const lane = free < 0 ? laneEnds.length : free
-    laneEnds[lane] = cue.end
-    laneById.set(cue.id, lane)
+    laneById.set(cue.id, 0)
     end = Math.max(end, cue.end)
+    maxSpan = Math.max(maxSpan, cue.end - cue.start)
   }
-  const height = Math.max(CUE_HEIGHT, laneEnds.length * (CUE_HEIGHT + CUE_LANE_GAP))
-  return { track, ordered, laneById, end, height }
+  return { track, ordered, laneById, end, height: CUE_HEIGHT, maxSpan }
 }
 
 function render() {
@@ -1023,6 +1050,7 @@ function renderRuler(start, end, limit, trackData) {
 
 function renderViewport() {
   const { usable } = timelineView()
+  cachedUsableWidth = usable
   const { min, max } = zoomBounds(usable)
   if (pixelsPerSecond <= min + .001) fitZoom = true
   pixelsPerSecond = fitZoom ? min : Math.min(max, pixelsPerSecond)
@@ -3325,8 +3353,10 @@ ruler.addEventListener('keydown', event => {
   event.preventDefault()
   nudgePlayhead(event.key === 'ArrowLeft' ? -1 : 1, event.shiftKey)
 })
+// 播放时每帧都会调用，缓存布局宽度避免每帧强制回流。
+let cachedUsableWidth = 0
 function revealTimelinePosition(target, page = false) {
-  const usable = Math.max(1, scroll.clientWidth - $('track-headings').offsetWidth)
+  const usable = cachedUsableWidth || Math.max(1, scroll.clientWidth - $('track-headings').offsetWidth)
   const position = width(target)
   const start = scroll.scrollLeft
   if (position < start) {
@@ -3539,6 +3569,7 @@ function startZoomDrag(event, kind, edge) {
   }
   zoomBar.focus({ preventScroll: true })
   zoomThumb.classList.add('dragging')
+  if (kind === 'zoom') event.currentTarget.classList.add('grabbing')
   event.preventDefault()
   event.stopPropagation()
   event.currentTarget.setPointerCapture(event.pointerId)
@@ -3611,6 +3642,7 @@ function endZoomDrag(event) {
   if (!zoomDrag || (event && event.pointerId !== zoomDrag.pointer)) return
   zoomDrag = undefined
   zoomThumb.classList.remove('dragging')
+  for (const grip of zoomBar.querySelectorAll('.zoom-grip')) grip.classList.remove('grabbing')
 }
 
 window.addEventListener('pointermove', pointerZoomMove)

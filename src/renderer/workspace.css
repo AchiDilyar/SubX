@@ -181,7 +181,11 @@ input[type=range] { margin: 0; accent-color: var(--accent); }
 .zoom-grip::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: #2a2b2e; }
 .zoom-grip[data-edge=left] { left: 0; }
 .zoom-grip[data-edge=right] { left: 100%; }
+.zoom-grip { transition: background .12s ease, box-shadow .12s ease, transform .12s ease; }
 .zoom-grip:hover, .zoom-thumb.dragging .zoom-grip { background: #fff; }
+/* 被抓住时：白圈加粗、整体略微放大，和悬停态区分开。 */
+.zoom-grip.grabbing { background: #fff; transform: translate(-50%, -50%) scale(1.15); box-shadow: 0 1px 5px #000d; }
+.zoom-grip.grabbing::after { inset: 6px; }
 .zoom-source { display: none; }
 .timeline-content { display: flex; min-height: 100%; width: max-content; min-width: 100%; }
 .track-headings { width: var(--heading-width); position: sticky; left: 0; z-index: 3; background: #1c1c1c; flex-shrink: 0; border-right: 1px solid var(--line); }

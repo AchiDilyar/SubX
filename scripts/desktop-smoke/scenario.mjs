@@ -69,8 +69,9 @@ async function run() {
     window.showInactive()
   } else {
     window.hide()
-    contents.debugger.attach('1.3')
   }
+  // Preview runs stay on screen for real compositing, so attach the debugger in both modes.
+  contents.debugger.attach('1.3')
   const mouse = (type, x, y, clickCount = 1) => contents.debugger.sendCommand('Input.dispatchMouseEvent', {
     type,
     x,
@@ -474,8 +475,17 @@ async function run() {
   assert.equal(Math.round(await exec('document.querySelector(".track-lane").getBoundingClientRect().height')), 32, 'Keep the single-lane track height at 32 pixels')
   assert.equal(await exec('document.querySelector(".cue")?.textContent'), '第一条字幕')
   assert.equal(await exec('document.querySelector("#cue-start").value'), '00:00:00.000')
+  await exec(`(() => { for (let i = 0; i < 15; i++) window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })) })()`)
+  await expect('document.querySelector("#timecode").value === "00:00:01.15"', 'move the playhead before adding an overlapping cue')
   await click('add-cue')
   assert.equal(await exec('document.querySelector(".cue.selected").textContent'), '空字幕')
+  // 一条轨道只有一行：重叠字幕块不能上下叠成两行。
+  assert(await exec(`(() => {
+    const blocks = [...document.querySelectorAll('.cue')]
+    const tops = new Set(blocks.map(block => Math.round(block.getBoundingClientRect().top)))
+    return blocks.length === 2 && tops.size === 1 &&
+      Math.round(document.querySelector('.track-lane').getBoundingClientRect().height) === 32
+  })()`), 'Keep overlapping cues on one timeline row instead of stacking lanes')
   const firstCue = await exec(`(() => {
     const bounds = document.querySelector('.cue:not(.selected)').getBoundingClientRect()
     return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 }
@@ -501,6 +511,8 @@ async function run() {
   await expect('document.querySelector(".cue")?.textContent === "空字幕"', 'undo text while retaining the timed block')
   await click('undo')
   await expect('document.querySelectorAll(".track-lane").length === 2', 'undo first cue and retain the two starter tracks')
+  await exec(`(() => { for (let i = 0; i < 15; i++) window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true })) })()`)
+  await expect('document.querySelector("#timecode").value === "00:00:00.00"', 'return the playhead to the start before the blank cue')
   await click('add-cue')
   saves.unshift('blank-block.subx')
   await click('save-project')
@@ -886,8 +898,15 @@ async function run() {
     return { x: grip.left + grip.width / 2, y: grip.top + grip.height / 2 }
   })()`)
   await mouse('mousePressed', gripTrack.x, gripTrack.y)
+  // 抓住把柄时白圈加粗，和普通悬停态区分。
+  assert(await exec(`(() => {
+    const grip = document.querySelector('#zoom-thumb .zoom-grip[data-edge=right]')
+    const ring = getComputedStyle(grip, '::after')
+    return grip.classList.contains('grabbing') && parseFloat(ring.top) >= 5 && parseFloat(ring.width) <= 3
+  })()`), 'Thicken the grabbed zoom handle ring')
   await mouse('mouseMoved', gripTrack.x - 40, gripTrack.y)
   await mouse('mouseReleased', gripTrack.x - 40, gripTrack.y)
+  assert(await exec(`!document.querySelector('#zoom-thumb .zoom-grip[data-edge=right]').classList.contains('grabbing')`), 'Clear the grabbed zoom handle state after release')
   const gripAfter = await exec(`(() => {
     const grip = document.querySelector('#zoom-thumb .zoom-grip[data-edge=right]').getBoundingClientRect()
     return grip.left + grip.width / 2

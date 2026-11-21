@@ -1,7 +1,7 @@
 {
   "name": "subx",
   "productName": "SubX",
-  "version": "0.1.0",
+  "version": "0.1.0-dev.1",
   "description": "Desktop editor for SRT and ASS subtitles",
   "private": true,
   "main": "src/main/main.mjs",

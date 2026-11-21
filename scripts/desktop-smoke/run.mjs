@@ -22,7 +22,9 @@ try {
   }))
   await writeFile(join(directory, 'main.mjs'), 'import ' + JSON.stringify(new URL('./scenario.mjs', import.meta.url).href))
 
-  const result = spawnSync(process.execPath, [require.resolve('electron/cli.js'), '--app=' + directory], {
+  // Extra switches (for example --no-sandbox in restricted CI sandboxes) stay opt-in.
+  const extraArgs = (process.env.SUBX_SMOKE_ELECTRON_ARGS ?? '').split(' ').filter(Boolean)
+  const result = spawnSync(process.execPath, [require.resolve('electron/cli.js'), ...extraArgs, directory], {
     env: { ...process.env, SUBX_SMOKE_DIRECTORY: directory, SUBX_PREVIEW_MEDIA: previewMedia },
     stdio: 'inherit',
     // The full media and desktop workflow can legitimately exceed 90 seconds.
