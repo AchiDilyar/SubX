@@ -1,4 +1,4 @@
-import { createProject, createTrack, addTopTrack, trackIndex, cueTiming, findCue, inspectTrackSplit, linkedIds, moveDelta, removeCue, splitTrack, trimDelta } from '../core/project.mjs'
+import { createProject, createSolidMedia, createTrack, addTopTrack, isSolidMedia, trackIndex, cueTiming, findCue, inspectTrackSplit, linkedIds, moveDelta, removeCue, splitTrack, trimDelta } from '../core/project.mjs'
 import { alignCue, frameBoundaries, nearestBoundary } from '../core/frame-grid.mjs'
 import { inspectSrt, printTime, readTime, writeSrt } from '../core/srt.mjs'
 import { assStyleResetCues, assTextCues, captureCue, pasteCue, groupAssLayers, importAssLayers, moveCuesToTrack, fallbackAssStyle, field, newStyle, readAss, renameAssStyleReset, setField, writeAss } from '../core/ass.mjs'
@@ -55,6 +55,13 @@ let rulerFrame
 let fitZoom = false
 let waveform
 let waveformMedia
+let solidMedia = null
+let solidPlaying = false
+let solidTimer = 0
+let solidStartedAt = 0
+let solidStartTime = 0
+let scriptIndex = 0
+let punch = null
 let projectDocument = null
 let projectBusy = false
 let switchingProject = false
@@ -383,6 +390,8 @@ function reset(next, media, documentHandle = null) {
   cueDrafts.clear()
   styleDrafts.clear()
   project = { styles: [], ...next }
+  punch = null
+  scriptIndex = project.script ? nextScriptIndex(0) : 0
   selected = undefined
   selectedCues.clear()
   currentTrack = undefined
@@ -406,6 +415,7 @@ function openResult(result) {
 }
 
 function attachVideo(reference) {
+  stopSolidClock()
   frameTimes = rulerFrame = undefined
   frameGap = Infinity
   $('ruler').dataset.frameIndex = reference ? 'loading' : 'none'
@@ -415,10 +425,15 @@ function attachVideo(reference) {
   waveformMedia = reference
   if (!reference) void app.cancelWaveform()
 
-  const missingPath = reference ? null : project.media
+  const solid = !reference && isSolidMedia(project.media) ? project.media : null
+  solidMedia = solid
+  $('solid-frame').hidden = !solid
+  if (solid) $('solid-frame').style.backgroundColor = solid.color
+  const missingPath = reference || solid ? null : project.media
   const originalName = missingPath?.split(/[\\/]/).pop()
-  $('media-name').textContent = reference?.name || originalName || '视频预览'
-  $('media-name').title = reference?.name ?? missingPath ?? ''
+  const label = reference?.name || (solid ? solidLabel(solid) : '')
+  $('media-name').textContent = label || originalName || '视频预览'
+  $('media-name').title = label || missingPath || ''
   $('empty-video-message').textContent = missingPath ? '原视频不可用' : ''
   $('empty-video-message').hidden = !missingPath
   $('open-media').textContent = missingPath ? '重新定位视频' : '打开视频'
@@ -426,20 +441,34 @@ function attachVideo(reference) {
   video.pause()
   video.hidden = true
   canvas.hidden = true
-  $('empty-video').hidden = false
+  $('empty-video').hidden = Boolean(solid)
   video.removeAttribute('src')
   if (reference) video.src = reference.url
-  video.load()
+  if (!solid) video.load()
   time = 0
   presentedFrameTime = null
   mediaDuration = 0
+  if (solid) {
+    mediaDuration = solid.duration
+    frameTimes = solidFrameTimes(solid)
+    frameGap = 1000 / solid.fps
+    $('ruler').dataset.frameIndex = frameTimes?.length ? 'ready' : 'unavailable'
+    $('ruler').title = frameTimes?.length ? '' : '空白视频时长较长，未生成逐帧索引。'
+    $('play').disabled = false
+    $('empty-video').hidden = true
+    fitPicture()
+    updatePreview()
+    renderViewport()
+    return
+  }
   observeVideoFrames()
   fitPicture()
   updatePreview()
 }
 
 function fitPicture() {
-  const ar = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9
+  const ar = isSolid() ? solidMedia.width / solidMedia.height :
+    video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9
   const availableWidth = stage.clientWidth
   const boxWidth = Math.min(availableWidth, stage.clientHeight * ar)
   frame.style.width = boxWidth + 'px'
@@ -448,6 +477,12 @@ function fitPicture() {
 }
 
 function applyQuality() {
+  if (isSolid()) {
+    video.hidden = true
+    canvas.hidden = true
+    $('solid-frame').hidden = false
+    return
+  }
   const scale = Number($('quality').value)
   const hasFrame = video.readyState >= 2
   const reduced = scale > 1 && hasFrame
@@ -497,10 +532,11 @@ function updatePreview() {
   assPreview.draw(captionTime, drag)
   $('timecode').value = printTime(Math.max(0, time), '.')
   const progress = $('preview-progress')
-  progress.disabled = !video.readyState || !mediaDuration
+  progress.disabled = !hasPicture() || !mediaDuration
   progress.value = mediaDuration ? String(Math.max(0, Math.min(1000, time * 1000 / mediaDuration))) : '0'
   updatePlayhead()
-  if (!video.paused) revealTimelinePosition(playheadPosition(), true)
+  updatePunch()
+  if (!playbackPaused()) revealTimelinePosition(playheadPosition(), true)
   const captions = []
   for (const row of rows) {
     if (!row.track.visible || assPreview.ready(row.track.ass ? row.track.id : 'plain-subtitles')) continue
@@ -574,12 +610,72 @@ function cssAssColor(value) {
   return hex + (255 - alpha).toString(16).padStart(2, '0')
 }
 
+const isSolid = () => Boolean(solidMedia)
+const hasPicture = () => isSolid() || video.readyState >= 2
+const playbackPaused = () => isSolid() ? !solidPlaying : video.paused
+function pausePlayback() {
+  if (isSolid()) pauseSolidClock()
+  else video.pause()
+}
+async function startPlayback() {
+  if (isSolid()) startSolidClock()
+  else await video.play()
+}
+function solidLabel(media) {
+  return '空白视频 · ' + media.color.toUpperCase() + ' · ' + media.width + '×' + media.height + ' · ' + media.fps + ' fps · ' + printTime(media.duration, '.')
+}
+function solidFrameTimes(media) {
+  const count = Math.floor(media.duration * media.fps / 1000)
+  if (count < 1 || count > 200000) return undefined
+  return Array.from({ length: count }, (_, index) => Math.round(index * 1000 / media.fps))
+}
+// 纯色空白视频没有媒体时钟，用 performance.now 推时间；定时器只负责刷新画面，
+// 读取当前时间时再按真实经过时长计算，避免后台窗口节流时时间不前进。
+function solidElapsed() {
+  if (!solidPlaying) return time
+  return Math.min(solidMedia.duration, solidStartTime + performance.now() - solidStartedAt)
+}
+function stopSolidClock() {
+  if (solidTimer) clearInterval(solidTimer)
+  solidTimer = 0
+  solidPlaying = false
+}
+function startSolidClock() {
+  if (!isSolid() || solidPlaying) return
+  if (time >= solidMedia.duration) seek(0)
+  solidPlaying = true
+  solidStartTime = time
+  solidStartedAt = performance.now()
+  syncPlayback()
+  solidTimer = setInterval(tickSolidClock, 16)
+}
+function tickSolidClock() {
+  if (!solidPlaying) return
+  time = Math.round(solidElapsed())
+  if (time >= solidMedia.duration) {
+    time = solidMedia.duration
+    stopSolidClock()
+    syncPlayback()
+  }
+  updatePreview()
+}
+function pauseSolidClock() {
+  if (!solidPlaying) return
+  time = Math.round(solidElapsed())
+  stopSolidClock()
+  syncPlayback()
+  updatePreview()
+}
+
 function seek(value, onFrame = false) {
-  const target = Math.max(0, Math.min(video.readyState ? mediaDuration : timelineEnd(), value))
+  const target = Math.max(0, Math.min(hasPicture() ? mediaDuration : timelineEnd(), value))
   rulerFrame = onFrame ? target : undefined
   time = Math.round(target)
   presentedFrameTime = null
-  if (video.readyState) video.currentTime = target / 1000
+  if (isSolid()) {
+    solidStartTime = time
+    solidStartedAt = performance.now()
+  } else if (video.readyState) video.currentTime = target / 1000
   updatePreview()
 }
 
@@ -614,7 +710,7 @@ function seekFrame(milliseconds, direction = 0) {
 
 // 方向键移动播放头：有帧索引时按帧，没有时按 0.1 秒；Shift 每次 1 秒。
 function nudgePlayhead(direction, shift) {
-  video.pause()
+  pausePlayback()
   if (frameTimes?.length && !shift) seekFrame(playheadPosition(), direction)
   else seekFrame(playheadPosition() + direction * (shift ? 1000 : 100))
   revealTimelinePosition(time)
@@ -626,6 +722,10 @@ function timelineEnd() {
 
 function drawWaveform(usable) {
   const canvas = $('waveform')
+  if (isSolid()) {
+    canvas.hidden = true
+    return
+  }
   if (waveformMode === 'off') {
     canvas.hidden = true
     return
@@ -687,7 +787,8 @@ function laneLayout(track) {
 
 function render() {
   rows = project.tracks.map(laneLayout)
-  if (!video.readyState) time = Math.min(time, timelineEnd())
+  renderScriptPanel()
+  if (!hasPicture()) time = Math.min(time, timelineEnd())
   reviewCues = []
   for (const [rowIndex, row] of rows.entries()) {
     for (const [cueIndex, cue] of row.ordered.entries()) {
@@ -1165,7 +1266,8 @@ function endDrag(pointer, commit) {
 
 function switchTab(tab, preview = true) {
   if ($(tab + '-tab').getAttribute('aria-selected') === 'true') return
-  for (const name of ['styles', 'settings', 'cue']) {
+  if (punch && tab !== 'script') finishPunch()
+  for (const name of ['styles', 'settings', 'cue', 'script']) {
     $(name + '-tab').setAttribute('aria-selected', String(tab === name))
     $(name + '-panel').hidden = tab !== name
   }
@@ -1651,6 +1753,244 @@ action('open-media', () => withProjectOperation(async () => {
   attachVideo(reference)
   status('已打开视频')
 }))
+
+const blankVideoDialog = $('blank-video-dialog')
+action('blank-video', () => {
+  if (projectBusy) return
+  $('blank-video-form').reset()
+  blankVideoDialog.returnValue = 'cancel'
+  blankVideoDialog.showModal()
+})
+blankVideoDialog.addEventListener('close', () => {
+  if (blankVideoDialog.returnValue !== 'create') return
+  const data = new FormData($('blank-video-form'))
+  const [width, height] = String(data.get('resolution')).split('x').map(Number)
+  const media = createSolidMedia({
+    color: String(data.get('color')),
+    width,
+    height,
+    fps: Number(data.get('fps')),
+    duration: Math.round(Number(data.get('duration')) * 1000),
+  })
+  if (!isSolidMedia(media)) {
+    status('空白视频设置无效')
+    return
+  }
+  void withProjectOperation(async () => {
+    project.media = media
+    updateProjectTitle()
+    attachVideo(null)
+    status('已添加空白视频 · ' + media.width + '×' + media.height + ' · ' + media.fps + ' fps')
+  }).catch(error => status(error.message))
+})
+
+// —— 文稿打轴 ——
+const scriptDialog = $('script-dialog')
+function parseScriptText(text, bilingual) {
+  const rows = text.replace(/^\uFEFF/, '').split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  const lines = []
+  if (bilingual) {
+    for (let index = 0; index < rows.length; index += 2) {
+      lines.push({ id: crypto.randomUUID(), text: rows[index], second: rows[index + 1] ?? '' })
+    }
+  } else {
+    for (const row of rows) lines.push({ id: crypto.randomUUID(), text: row, second: null })
+  }
+  return lines
+}
+function scriptCueMap() {
+  const map = new Map()
+  for (const track of project.tracks) {
+    for (const cue of track.cues) {
+      if (!cue.scriptLine) continue
+      const list = map.get(cue.scriptLine) ?? []
+      list.push({ track, cue })
+      map.set(cue.scriptLine, list)
+    }
+  }
+  return map
+}
+function nextScriptIndex(from = 0) {
+  const lines = project.script?.lines ?? []
+  const punched = scriptCueMap()
+  for (let step = 0; step < lines.length; step++) {
+    const index = (Math.max(0, from) + step) % lines.length
+    if (!punched.has(lines[index].id)) return index
+  }
+  return lines.length
+}
+function renderScriptPanel() {
+  const script = project.script
+  const list = $('script-list')
+  const progress = $('script-progress')
+  if (!script?.lines.length) {
+    progress.textContent = '未导入文稿'
+    $('script-hint').hidden = false
+    list.replaceChildren()
+    return
+  }
+  $('script-hint').hidden = true
+  const punched = scriptCueMap()
+  progress.textContent = punched.size + ' / ' + script.lines.length + ' 行已打轴'
+  const items = script.lines.map((line, index) => {
+    const item = element('li', 'script-line')
+    item.dataset.index = String(index)
+    if (index === scriptIndex) item.classList.add('current')
+    const cues = punched.get(line.id) ?? []
+    if (cues.length) item.classList.add('punched')
+    const text = element('span', 'script-text', line.text)
+    if (script.bilingual) text.append(element('small', '', line.second || '（缺译文）'))
+    const time = cues.length ? printTime(cues[0].cue.start, '.') + ' – ' + printTime(cues[0].cue.end, '.') : ''
+    item.append(element('span', 'script-index', String(index + 1)), text, element('span', 'script-time', time))
+    item.addEventListener('click', () => {
+      if (punch) finishPunch()
+      scriptIndex = index
+      renderScriptPanel()
+    })
+    return item
+  })
+  list.replaceChildren(...items)
+  const current = list.querySelector('.script-line.current')
+  if (current && $('script-tab').getAttribute('aria-selected') === 'true') current.scrollIntoView({ block: 'nearest' })
+}
+function openScriptDialog() {
+  if (projectBusy) return
+  $('script-form').reset()
+  $('script-order-label').hidden = true
+  $('script-dialog-error').hidden = true
+  scriptDialog.returnValue = 'cancel'
+  scriptDialog.showModal()
+}
+action('import-script', openScriptDialog)
+action('script-import', openScriptDialog)
+$('script-form').addEventListener('change', event => {
+  if (event.target.name === 'mode') $('script-order-label').hidden = event.target.value !== 'bilingual'
+})
+scriptDialog.addEventListener('close', () => {
+  if (scriptDialog.returnValue !== 'choose') return
+  const data = new FormData($('script-form'))
+  const bilingual = data.get('mode') === 'bilingual'
+  const order = bilingual && data.get('order') === 'reverse' ? 'reverse' : 'first'
+  void withProjectOperation(async () => {
+    const file = await app.chooseScript()
+    if (!file) return
+    const lines = parseScriptText(file.text, bilingual)
+    if (!lines.length) throw new Error(file.name + ' 没有可用的文稿行。')
+    const missing = bilingual ? lines.filter(line => !line.second).length : 0
+    if (punch) finishPunch()
+    edit(() => {
+      project.script = { bilingual, order, lines, tracks: {} }
+      scriptIndex = 0
+    })
+    switchTab('script')
+    renderScriptPanel()
+    status('已导入 ' + lines.length + ' 行文稿' + (missing ? ' · ' + missing + ' 行缺译文' : ''))
+  }).catch(error => status(error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')))
+})
+action('script-tab', () => switchTab('script'))
+function playheadNow() {
+  return isSolid() && solidPlaying ? Math.round(solidElapsed()) : Math.round(time)
+}
+function punchAvailable() {
+  return Boolean(project.script?.lines.length) && hasPicture() &&
+    $('script-tab').getAttribute('aria-selected') === 'true' && !switchingProject
+}
+function ensureScriptTracks() {
+  const script = project.script
+  const stored = script.tracks ?? {}
+  let first = project.tracks.find(track => track.id === stored.first)
+  let second = project.tracks.find(track => track.id === stored.second)
+  if (!first) {
+    first = createTrack(script.bilingual ? '文稿 · 上轨' : '文稿')
+    project.tracks.unshift(first)
+    script.tracks = { ...stored, first: first.id }
+  }
+  if (script.bilingual && !second) {
+    second = createTrack('文稿 · 下轨')
+    project.tracks.splice(project.tracks.indexOf(first) + 1, 0, second)
+    script.tracks = { ...script.tracks, second: second.id }
+  }
+  return { first, second }
+}
+function beginPunch(key) {
+  if (!project.script || !punchAvailable()) return
+  if (punch?.key === key) return
+  let start = playheadNow()
+  if (punch) {
+    const seam = finishPunch()
+    if (seam !== undefined) start = seam
+  }
+  if (scriptIndex >= project.script.lines.length) {
+    status('文稿已全部打轴完成')
+    return
+  }
+  const line = project.script.lines[scriptIndex]
+  const order = project.script.order === 'reverse' ? 'reverse' : 'first'
+  const created = { cueIds: [] }
+  edit(() => {
+    for (const { cue } of scriptCueMap().get(line.id) ?? []) removeCue(project, cue.id)
+    const { first, second } = ensureScriptTracks()
+    const topCue = { id: crypto.randomUUID(), start, end: start + 1, text: order === 'reverse' ? line.second : line.text, scriptLine: line.id }
+    first.cues.push(topCue)
+    created.cueIds.push(topCue.id)
+    if (project.script.bilingual && second) {
+      const bottomCue = { id: crypto.randomUUID(), start, end: start + 1, text: order === 'reverse' ? line.text : line.second, scriptLine: line.id }
+      second.cues.push(bottomCue)
+      project.links.push([topCue.id, bottomCue.id])
+      created.cueIds.push(bottomCue.id)
+    }
+    created.lineIndex = scriptIndex
+  })
+  punch = { key, lineIndex: created.lineIndex, start, cueIds: created.cueIds }
+  if (playbackPaused()) void startPlayback()
+  updatePunch()
+  status('正在给第 ' + (created.lineIndex + 1) + ' 行打轴，松开 ' + key.toUpperCase() + ' 结束')
+}
+function updatePunch() {
+  if (!punch) return
+  const end = Math.max(punch.start + 1, playheadNow())
+  for (const id of punch.cueIds) {
+    const cue = findCue(project, id)
+    if (!cue) continue
+    cue.end = end
+    const block = rows.find(row => row.buttons.has(id))?.buttons.get(id)
+    if (block) block.style.width = Math.max(1, width(cue.end - cue.start)) + 'px'
+  }
+}
+function finishPunch() {
+  if (!punch) return undefined
+  const active = punch
+  punch = null
+  const end = Math.max(active.start + 1, playheadNow())
+  const aligned = alignCue(editingBoundaries(), active.start, end)
+  for (const id of active.cueIds) {
+    const cue = findCue(project, id)
+    if (cue) Object.assign(cue, { start: aligned.start, end: aligned.end })
+  }
+  scriptIndex = nextScriptIndex(active.lineIndex + 1)
+  render()
+  status('第 ' + (active.lineIndex + 1) + ' 行已打轴 · ' + printTime(aligned.start, '.') + ' – ' + printTime(aligned.end, '.'))
+  return aligned.end
+}
+function cancelPunch() {
+  if (!punch) return
+  const active = punch
+  punch = null
+  const entry = undo.pop()
+  if (entry) {
+    project = entry.project
+    revision = entry.revision
+    redo.length = 0
+    ensureSelection()
+  }
+  scriptIndex = active.lineIndex
+  render()
+  status('已取消第 ' + (active.lineIndex + 1) + ' 行打轴')
+}
+window.addEventListener('keyup', event => {
+  if (punch && event.key === punch.key) finishPunch()
+})
+window.addEventListener('blur', () => { if (punch) finishPunch() })
 function updateProjectTitle() {
   const name = projectDocument?.name ?? '未命名工程'
   const modified = dirty() || hasPendingForm()
@@ -1662,7 +2002,7 @@ async function withProjectOperation(callback) {
   if (projectBusy) return
   projectBusy = true
   const controls = ['new-project', 'open-project', 'recent-projects', 'save-project',
-    'save-project-as', 'open-media', 'import-subtitles']
+    'save-project-as', 'open-media', 'blank-video', 'import-subtitles', 'import-script', 'script-import']
   for (const id of controls) $(id).disabled = true
   try {
     await callback()
@@ -1957,7 +2297,7 @@ action('add-cue', () => {
     status('轨道已锁定，解锁后可添加字幕')
     return
   }
-  video.pause()
+  pausePlayback()
   if (linkMode) setLinkMode(false)
   edit(() => {
     let target = track()
@@ -2018,7 +2358,7 @@ function openCueEditor(owner, cue) {
     status('轨道已锁定，解锁后可编辑正文')
     return
   }
-  video.pause()
+  pausePlayback()
   if (selected !== cue.id || currentTrack !== owner.id) pick(owner, cue)
   editorCue = cue.id
   initialEditorText = $('cue-text').value
@@ -2121,7 +2461,7 @@ function pasteTimelineCue() {
     return
   }
   if (linkMode) setLinkMode(false)
-  video.pause()
+  pausePlayback()
   edit(() => {
     const cue = pasteCue(target, clipboard, Math.round(playheadPosition()), project.styles)
     Object.assign(cue, alignCue(editingBoundaries(), cue.start, cue.end))
@@ -2245,7 +2585,7 @@ action('next-review', () => {
     rowIndex > activeRow || (rowIndex === activeRow && cueIndex > activeCue)
   ) ?? reviewCues[0]
   if (linkMode) setLinkMode(false)
-  video.pause()
+  pausePlayback()
   pick(row.track, cue)
   seek(cue.start)
   revealTimelinePosition(cue.start)
@@ -2257,7 +2597,7 @@ action('next-review', () => {
     if (target.top < bounds.top) scroll.scrollTop -= bounds.top - target.top
     else if (target.bottom > bounds.top + scroll.clientHeight) scroll.scrollTop += target.bottom - bounds.top - scroll.clientHeight
   }
-  status(video.readyState && cue.start > mediaDuration ? '已定位待校对字幕，起点超出视频时长。' : '已定位待校对字幕')
+  status(hasPicture() && cue.start > mediaDuration ? '已定位待校对字幕，起点超出视频时长。' : '已定位待校对字幕')
 })
 action('complete-review', () => {
   const cue = findCue(project, selected)
@@ -2478,8 +2818,8 @@ $('cue-form').addEventListener('submit', event => {
 })
 
 action('play', async () => {
-  if (video.paused) await video.play()
-  else video.pause()
+  if (playbackPaused()) await startPlayback()
+  else pausePlayback()
 })
 function setPreviewMaximized(maximize) {
   if (monitor.classList.contains('preview-maximized') === maximize) return
@@ -2493,17 +2833,19 @@ function setPreviewMaximized(maximize) {
 }
 action('fullscreen-preview', () => setPreviewMaximized(!monitor.classList.contains('preview-maximized')))
 $('preview-progress').addEventListener('input', event => {
-  if (mediaDuration && video.readyState) seek(mediaDuration * Number(event.target.value) / 1000)
+  if (mediaDuration && hasPicture()) seek(mediaDuration * Number(event.target.value) / 1000)
 })
 function syncPlayback() {
-  $('play').replaceChildren(icon(video.paused ? 'play' : 'pause'))
-  $('play').title = video.paused ? '播放' : '暂停'
-  $('play').setAttribute('aria-label', video.paused ? '播放' : '暂停')
+  const paused = playbackPaused()
+  $('play').replaceChildren(icon(paused ? 'play' : 'pause'))
+  $('play').title = paused ? '播放' : '暂停'
+  $('play').setAttribute('aria-label', paused ? '播放' : '暂停')
 }
 video.addEventListener('play', () => { rulerFrame = undefined; syncPlayback() })
 video.addEventListener('pause', syncPlayback)
 video.addEventListener('ended', syncPlayback)
 video.addEventListener('loadedmetadata', () => {
+  if (isSolid()) return
   mediaDuration = Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : 0
   const reference = waveformMedia
   if (reference && mediaDuration) {
@@ -2534,11 +2876,12 @@ video.addEventListener('loadedmetadata', () => {
   renderViewport()
 })
 video.addEventListener('loadeddata', () => {
+  if (isSolid()) return
   $('empty-video').hidden = true
   $('play').disabled = false
   applyQuality()
 })
-video.addEventListener('emptied', () => { $('play').disabled = true })
+video.addEventListener('emptied', () => { if (!isSolid()) $('play').disabled = true })
 video.addEventListener('error', () => {
   if (!video.getAttribute('src')) return
   $('play').disabled = true
@@ -2551,26 +2894,29 @@ video.addEventListener('error', () => {
   status('无法播放此视频。请检查文件或尝试 H.264/AAC MP4。')
 })
 video.addEventListener('seeking', () => {
+  if (isSolid()) return
   if (rulerFrame !== undefined && Math.abs(video.currentTime * 1000 - rulerFrame) > .51) rulerFrame = undefined
   presentedFrameTime = null
   observeVideoFrames()
 })
 video.addEventListener('seeked', () => {
+  if (isSolid()) return
   time = Math.round(video.currentTime * 1000)
   applyQuality()
   updatePreview()
 })
 video.addEventListener('timeupdate', () => {
-  if (!video.seeking) {
+  if (!isSolid() && !video.seeking) {
     time = Math.round(video.currentTime * 1000)
     updatePreview()
   }
 })
 function observeVideoFrames() {
+  if (isSolid()) return
   if (frameRequest !== undefined) video.cancelVideoFrameCallback(frameRequest)
   const generation = ++frameGeneration
   function frameReady(_now, metadata) {
-    if (generation !== frameGeneration) return
+    if (generation !== frameGeneration || isSolid()) return
     frameRequest = video.requestVideoFrameCallback(frameReady)
     if (!video.seeking) {
       // A frame's start can precede the exact playback position, especially when paused.
@@ -2588,7 +2934,7 @@ const ruler = $('ruler')
 let rulerPointer
 let rulerScrollFrame = 0
 function seekWithPointer(event) {
-  video.pause()
+  pausePlayback()
   const bounds = scroll.getBoundingClientRect()
   const x = Math.max(bounds.left + $('track-headings').offsetWidth, Math.min(bounds.right - 1, event.clientX))
   seekFrame((x - ruler.getBoundingClientRect().left) * 1000 / pixelsPerSecond)
@@ -2711,6 +3057,11 @@ window.addEventListener('blur', () => endDrag(drag?.pointer, false))
 window.addEventListener('keydown', event => {
   // isComposing can be false at the start or end of IME input.
   if (event.isComposing || event.keyCode === 229) return
+  if (event.key === 'Escape' && punch) {
+    event.preventDefault()
+    cancelPunch()
+    return
+  }
   if (event.key === 'Escape' && drag) endDrag(drag.pointer, false)
   if (event.key === 'Escape' && marquee) endMarquee({ pointerId: marquee.id }, false)
   if (switchingProject || document.querySelector('dialog[open]')) return
@@ -2744,6 +3095,11 @@ window.addEventListener('keydown', event => {
     !['checkbox', 'radio', 'range', 'button', 'submit', 'reset', 'color'].includes(field.type))
   const localKeys = typing || Boolean(event.target.closest?.('[role="menu"], dialog'))
   if (!localKeys && !event.defaultPrevented && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (!event.repeat && !event.shiftKey && (event.key === 'j' || event.key === 'k') && punchAvailable()) {
+      event.preventDefault()
+      beginPunch(event.key)
+      return
+    }
     if (event.code === 'Space') {
       event.preventDefault()
       if (!$('play').disabled && !event.repeat) $('play').click()
@@ -3032,4 +3388,18 @@ $('play').disabled = true
 ensureSelection()
 render()
 
-bindComposition({ project: () => project, currentTrack: track, hasDraft: hasPendingForm, report: status })
+bindComposition({
+  project: () => project,
+  currentTrack: track,
+  hasDraft: hasPendingForm,
+  report: status,
+  media: () => ({
+    ready: hasPicture(),
+    name: $('media-name').textContent,
+    width: isSolid() ? solidMedia.width : video.videoWidth,
+    height: isSolid() ? solidMedia.height : video.videoHeight,
+    duration: isSolid() ? solidMedia.duration / 1000 : video.duration,
+    solid: isSolid() ? solidMedia : null,
+    pause: pausePlayback,
+  }),
+})

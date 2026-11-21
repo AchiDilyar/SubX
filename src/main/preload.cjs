@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('subx', {
   chooseMedia: () => ipcRenderer.invoke('media:choose'),
   finishMediaSelection: (token, accepted) => ipcRenderer.invoke('media:finish-selection', token, accepted),
   chooseSubtitles: () => ipcRenderer.invoke('subtitles:choose'),
+  chooseScript: () => ipcRenderer.invoke('script:choose'),
   openProject: recent => ipcRenderer.invoke('project:open', recent),
   recentProjects: () => ipcRenderer.invoke('project:recent'),
   saveProject: (project, documentId, saveAs, id) => ipcRenderer.invoke('project:save', project, documentId, saveAs, id),

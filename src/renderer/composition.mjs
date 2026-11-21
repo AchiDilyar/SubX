@@ -36,10 +36,9 @@ export function compositionLayers(tracks, styles, settings, duration = 0, select
     .map(({ track, styles, fade }) => renderAss(track, styles, undefined, fade))
 }
 
-export function bindComposition({ project, currentTrack, hasDraft, report }) {
+export function bindComposition({ project, currentTrack, hasDraft, report, media }) {
   const get = id => document.getElementById(id)
   const api = window.subx
-  const video = get('video')
   const dialog = get('composition-dialog')
   const form = get('composition-form')
   const start = get('composition-start')
@@ -65,9 +64,10 @@ export function bindComposition({ project, currentTrack, hasDraft, report }) {
     const count = tracks.reduce((sum, track) => sum + track.cues.filter(cue => cue.text.trim()).length, 0)
     get('composition-cues').textContent = tracks.length + ' 条轨道 · ' + count + ' 条非空字幕' +
       (skipped ? ' · 跳过 ' + skipped + ' 条锁定轨道' : '')
-    const ready = video.videoWidth > 0 && video.readyState >= 2 && !video.error
-    get('composition-source').textContent = ready ? get('media-name').textContent : '请先打开视频'
-    get('composition-info').textContent = ready ? video.videoWidth + ' × ' + video.videoHeight + ' · ' + printTime(Math.round(video.duration * 1000), '.') : ''
+    const info = media()
+    const ready = info.ready
+    get('composition-source').textContent = ready ? info.name : '请先打开视频'
+    get('composition-info').textContent = ready ? info.width + ' × ' + info.height + ' · ' + printTime(Math.round(info.duration * 1000), '.') : ''
     if (!running) {
       const hasOutput = count || project().settings?.watermark
       message.textContent = hasDraft() ? '请先应用或取消编辑区的草稿。' : !hasOutput ? '所选范围内还没有字幕正文。' : ''
@@ -76,13 +76,13 @@ export function bindComposition({ project, currentTrack, hasDraft, report }) {
   }
 
   get('compose-video').addEventListener('click', () => {
-    video.pause()
+    media().pause()
     update()
     dialog.showModal()
   })
   scope.addEventListener('change', update)
-  video.addEventListener('loadeddata', () => { if (dialog.open) update() })
-  video.addEventListener('error', () => { if (dialog.open) update() })
+  get('video').addEventListener('loadeddata', () => { if (dialog.open) update() })
+  get('video').addEventListener('error', () => { if (dialog.open) update() })
   cancel.addEventListener('click', async () => {
     if (!running) return dialog.close()
     cancel.disabled = true
@@ -93,11 +93,13 @@ export function bindComposition({ project, currentTrack, hasDraft, report }) {
   form.addEventListener('submit', async event => {
     event.preventDefault()
     if (running || start.disabled) return
+    const info = media()
     const options = Object.fromEntries(new FormData(form))
     delete options.scope
     options.crf = Number(options.crf)
+    if (info.solid) options.solid = info.solid
     options.layers = compositionLayers(project().tracks, project().styles, project().settings,
-      Math.ceil(video.duration * 100) * 10, new Set(selectedTracks().map(track => track.id)))
+      Math.ceil(info.duration * 100) * 10, new Set(selectedTracks().map(track => track.id)))
     running = true
     form.querySelector('fieldset').disabled = true
     start.disabled = true
@@ -106,7 +108,7 @@ export function bindComposition({ project, currentTrack, hasDraft, report }) {
     progress.removeAttribute('value')
     message.textContent = '正在准备输出文件…'
     const unsubscribe = api.onComposeProgress(seconds => {
-      progress.value = Math.min(0.99, seconds / video.duration)
+      progress.value = Math.min(0.99, seconds / info.duration)
       message.textContent = '正在编码 · ' + Math.floor(progress.value * 100) + '%'
     })
     try {

@@ -3,6 +3,7 @@ import { constants } from 'node:fs'
 import { access, chmod, lstat, mkdtemp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, delimiter, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import { isSolidMedia } from '../core/project.mjs'
 
 const inspect = promisify(execFile)
 const codecs = new Map([['h264', 'libx264'], ['hevc', 'libx265']])
@@ -12,6 +13,7 @@ export function validateComposition(options) {
       !Number.isInteger(options.crf) || options.crf < 0 || options.crf > 51 ||
       !['source', '720', '1080', '2160'].includes(options.height) ||
       !['source', '24', '25', '30', '60'].includes(options.fps) || !['128', '192', '320', 'none'].includes(options.audio) ||
+      (options.solid !== undefined && !isSolidMedia(options.solid)) ||
       !Array.isArray(options.layers) || options.layers.some(layer => typeof layer !== 'string' || layer.includes('\0'))) {
     throw new Error('无效的视频合成设置。')
   }
@@ -89,16 +91,16 @@ async function destinationState(file, source) {
     throw error
   }
   if (!info.isFile()) throw new Error('请选择普通 MP4 文件作为输出。')
-  if (info.dev === source.dev && info.ino === source.ino) throw new Error('输出文件和源视频相同，请选择其他文件名。')
+  if (source && info.dev === source.dev && info.ino === source.ino) throw new Error('输出文件和源视频相同，请选择其他文件名。')
   return info
 }
 
-export async function encodeVideo({ binary, source, destination, options, signal, progress = () => {} }) {
+export async function encodeVideo({ binary, source, solid, destination, options, signal, progress = () => {} }) {
   validateComposition(options)
   signal.throwIfAborted()
   if (extname(destination).toLowerCase() !== '.mp4') throw new Error('请将输出文件保存为 .mp4。')
-  const sourceInfo = await stat(source, { bigint: true })
-  const original = await destinationState(destination, sourceInfo)
+  const sourceInfo = solid ? null : await stat(source, { bigint: true })
+  const original = solid ? null : await destinationState(destination, sourceInfo)
   const work = await mkdtemp(join(dirname(destination), '.subx-video-'))
   try {
     const filters = []
@@ -116,21 +118,27 @@ export async function encodeVideo({ binary, source, destination, options, signal
       await writeFile(join(work, name), layer)
       filters.push('ass=' + name + ':fontsdir=fonts')
     }
-    const demuxer = /\.(webm|mkv)$/i.test(source) ? 'matroska' : 'mov'
+    // 空白视频用 lavfi 的纯色源生成画面，不依赖任何媒体文件。
+    const input = solid
+      ? ['-f', 'lavfi', '-i', 'color=c=0x' + solid.color.slice(1) + ':s=' + solid.width + 'x' + solid.height +
+        ':r=' + solid.fps + ':d=' + solid.duration / 1000]
+      : ['-protocol_whitelist', 'file', '-f', /\.(webm|mkv)$/i.test(source) ? 'matroska' : 'mov', '-i', resolve(source)]
     const args = ['-hide_banner', '-nostdin', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1',
-      '-protocol_whitelist', 'file', '-f', demuxer, '-i', resolve(source), '-map', '0:V:0',
+      ...input, '-map', '0:V:0',
       '-vf', filters.join(','), '-c:v', codecs.get(options.codec), '-preset', options.preset,
       '-crf', String(options.crf), '-pix_fmt', 'yuv420p']
     if (options.codec === 'hevc') args.push('-tag:v', 'hvc1')
-    if (options.audio === 'none') args.push('-an')
+    if (solid || options.audio === 'none') args.push('-an')
     else args.push('-map', '0:a:0?', '-c:a', 'aac', '-b:a', options.audio + 'k')
     args.push('-movflags', '+faststart', '-f', 'mp4', 'output.mp4')
     await runEncoder(binary, args, work, signal, progress)
     const output = join(work, 'output.mp4')
     if (original && process.platform !== 'win32') await chmod(output, Number(original.mode & 0o777n))
-    const latest = await destinationState(destination, sourceInfo)
-    if (['dev', 'ino', 'size', 'ctimeNs'].some(key => original?.[key] !== latest?.[key])) {
-      throw new Error('目标文件已变化，请重新选择输出文件。')
+    if (!solid) {
+      const latest = await destinationState(destination, sourceInfo)
+      if (['dev', 'ino', 'size', 'ctimeNs'].some(key => original?.[key] !== latest?.[key])) {
+        throw new Error('目标文件已变化，请重新选择输出文件。')
+      }
     }
     signal.throwIfAborted()
     await rename(output, destination)

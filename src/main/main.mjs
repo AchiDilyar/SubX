@@ -303,8 +303,8 @@ async function initialize() {
     } else releaseMedia(pendingMedia, window)
     return true
   })
-  bind('subtitles:choose', async window => {
-    const file = await selectFile(window, '字幕', ['srt', 'ass'])
+  async function chooseText(window, name, extensions) {
+    const file = await selectFile(window, name, extensions)
     if (!file) return null
     const contents = await readFile(file)
     const [first, second] = contents
@@ -312,7 +312,9 @@ async function initialize() {
     if (first === 0xff && second === 0xfe) encoding = 'utf-16le'
     if (first === 0xfe && second === 0xff) encoding = 'utf-16be'
     return { name: basename(file), extension: extname(file).toLowerCase(), text: decodeText(contents, file, encoding) }
-  })
+  }
+  bind('subtitles:choose', window => chooseText(window, '字幕', ['srt', 'ass']))
+  bind('script:choose', window => chooseText(window, '文稿', ['txt']))
   bind('project:open', async (window, recent) => {
     const session = mediaSessions.get(window)
     const file = recent === undefined ? await selectFile(window, 'SubX 工程', ['subx']) : recent
@@ -330,7 +332,7 @@ async function initialize() {
     }
     validateProject(project)
     await remember(file)
-    const media = await mediaReference(project.media, window, session)
+    const media = typeof project.media === 'string' ? await mediaReference(project.media, window, session) : null
     if (window.isDestroyed() || mediaSessions.get(window) !== session) return null
     releaseMedia(pendingMedia, window)
     setActiveMedia(window, media?.token)
@@ -442,13 +444,15 @@ async function initialize() {
       await writeAtomically(encoderPreference, JSON.stringify(binary))
     }
     signal.throwIfAborted()
+    const solid = options.solid ?? null
+    const base = solid ? join(app.getPath('videos'), '空白视频') : join(dirname(source), basename(source, extname(source)))
     const result = await dialog.showSaveDialog(window, {
-      title: '合成视频', defaultPath: join(dirname(source), basename(source, extname(source)) + ' - 字幕.mp4'),
+      title: '合成视频', defaultPath: base + ' - 字幕.mp4',
       filters: [{ name: 'MP4 视频', extensions: ['mp4'] }],
     })
     if (!result.filePath || signal.aborted) return false
-    if (activeMedia.get(window) !== token) throw new Error('源视频已更换，请重新开始合成。')
-    await encodeVideo({ binary, source, destination: result.filePath, options, signal,
+    if (!solid && activeMedia.get(window) !== token) throw new Error('源视频已更换，请重新开始合成。')
+    await encodeVideo({ binary, source, solid, destination: result.filePath, options, signal,
       progress: seconds => { if (!window.isDestroyed()) window.webContents.send('video:progress', seconds) },
     })
     return true
@@ -458,7 +462,7 @@ async function initialize() {
     if (compositions.has(window)) throw new Error('已有视频正在合成。')
     const token = activeMedia.get(window)
     const source = media.get(token)
-    if (!source) throw new Error('请先打开源视频。')
+    if (!options.solid && !source) throw new Error('请先打开源视频。')
     const controller = new AbortController()
     const done = compose(window, options, source, token, controller.signal)
       .catch(error => { if (controller.signal.aborted) return false; throw error })

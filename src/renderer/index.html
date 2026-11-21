@@ -73,7 +73,9 @@
           <button type="button" role="menuitem" id="save-project-as"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg><span>另存为…</span><kbd>⇧⌘S</kbd></button>
           <hr>
           <button type="button" role="menuitem" id="menu-open-media"><svg class="icon" aria-hidden="true"><use href="#i-film"></use></svg><span>打开视频…</span></button>
+          <button type="button" role="menuitem" id="blank-video"><svg class="icon" aria-hidden="true"><use href="#i-monitor"></use></svg><span>添加空白视频…</span></button>
           <button type="button" role="menuitem" id="import-subtitles"><svg class="icon" aria-hidden="true"><use href="#i-import"></use></svg><span>导入字幕…</span><kbd>⌘I</kbd></button>
+          <button type="button" role="menuitem" id="import-script"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg><span>导入文稿…</span></button>
           <hr>
           <button type="button" role="menuitem" id="menu-quit"><svg class="icon" aria-hidden="true"><use href="#i-power"></use></svg><span>退出 SubX</span><kbd>⌘Q</kbd></button>
         </div>
@@ -128,6 +130,7 @@
         </header>
         <div id="monitor-stage" class="monitor-stage">
           <div id="frame" class="frame">
+            <div id="solid-frame" class="solid-frame" hidden></div>
             <video id="video" preload="metadata" playsinline></video>
             <canvas id="preview-canvas" hidden></canvas>
             <div id="ass-overlays" aria-hidden="true"></div>
@@ -156,6 +159,7 @@
           <button id="styles-tab" role="tab" aria-selected="true" aria-controls="styles-panel"><svg class="icon" aria-hidden="true"><use href="#i-style"></use></svg>样式管理</button>
           <button id="settings-tab" role="tab" aria-selected="false" aria-controls="settings-panel"><svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg>项目设置</button>
           <button id="cue-tab" role="tab" aria-selected="false" aria-controls="cue-panel" hidden>字幕编辑</button>
+          <button id="script-tab" role="tab" aria-selected="false" aria-controls="script-panel"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg>待打轴</button>
         </header>
         <section id="styles-panel" class="inspector-body" role="tabpanel" aria-labelledby="styles-tab">
           <div id="style-list-header" class="inspector-heading">项目样式 <button id="add-style" title="新建样式" aria-label="新建样式"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></button></div>
@@ -167,6 +171,14 @@
             <label><input id="project-fade" type="checkbox">字幕渐入渐出</label>
             <label><input id="project-watermark" type="checkbox">画面水印</label>
           </div>
+        </section>
+        <section id="script-panel" class="inspector-body" role="tabpanel" aria-labelledby="script-tab" hidden>
+          <div class="script-heading">
+            <span id="script-progress">未导入文稿</span>
+            <button id="script-import" type="button" title="导入文稿" aria-label="导入文稿"><svg class="icon" aria-hidden="true"><use href="#i-import"></use></svg></button>
+          </div>
+          <p id="script-hint" class="muted">导入 TXT 文稿后播放视频，按住 J 或 K 给当前行打轴；松开一键前按下另一键，下一行会无缝接上。</p>
+          <ol id="script-list" class="script-list"></ol>
         </section>
         <section id="cue-panel" class="inspector-body" role="tabpanel" aria-labelledby="cue-tab" hidden>
           <form id="cue-form">
@@ -332,6 +344,34 @@
       </div>
       <p id="ass-export-note" class="muted" hidden>选择 SRT 会省略 ASS 样式。</p>
       <div class="dialog-actions"><button value="cancel">取消</button></div>
+    </form>
+  </dialog>
+  <dialog id="script-dialog" aria-labelledby="script-dialog-heading">
+    <form id="script-form" method="dialog">
+      <h2 id="script-dialog-heading">导入文稿</h2>
+      <p class="dialog-description">只支持 TXT。单语每行一条字幕；双语时相邻两行为一组（原文 / 译文）。</p>
+      <div class="script-mode" role="radiogroup" aria-label="文稿语言">
+        <label><input type="radio" name="mode" value="single" checked>单语</label>
+        <label><input type="radio" name="mode" value="bilingual">双语 · 相邻两行一组</label>
+      </div>
+      <label id="script-order-label" hidden>上下行顺序<select name="order"><option value="first" selected>第一行放上轨</option><option value="reverse">第二行放上轨</option></select></label>
+      <p id="script-dialog-error" class="cue-editor-error" hidden></p>
+      <div class="dialog-actions"><button value="cancel">取消</button><button class="primary" id="script-choose" value="choose">选择 TXT 文件…</button></div>
+    </form>
+  </dialog>
+  <dialog id="blank-video-dialog" aria-labelledby="blank-video-heading">
+    <form id="blank-video-form" method="dialog">
+      <h2 id="blank-video-heading">添加空白视频</h2>
+      <p class="dialog-description">用纯色画面作为时间基准，不需要真实视频文件；合成视频时会输出同色画面加字幕。</p>
+      <div class="columns">
+        <label>颜色<input name="color" type="color" value="#000000" required></label>
+        <label>分辨率<select name="resolution"><option value="1920x1080" selected>1920 × 1080</option><option value="3840x2160">3840 × 2160</option><option value="1280x720">1280 × 720</option><option value="1080x1920">1080 × 1920（竖屏）</option></select></label>
+      </div>
+      <div class="columns">
+        <label>帧率<select name="fps"><option>24</option><option>25</option><option selected>30</option><option>50</option><option>60</option></select></label>
+        <label>时长（秒）<input name="duration" type="number" min="1" max="86400" step="1" value="60" required></label>
+      </div>
+      <div class="dialog-actions"><button value="cancel">取消</button><button class="primary" id="blank-video-create" value="create">创建</button></div>
     </form>
   </dialog>
   <dialog id="composition-dialog" aria-labelledby="composition-heading">

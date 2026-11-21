@@ -128,7 +128,7 @@ async function run() {
   }
   await click('menu-file')
   await expect('!document.querySelector("#menu-file-popup").hidden && document.querySelector("#menu-file").getAttribute("aria-expanded") === "true"', 'open the file menu with icon items')
-  assert.deepEqual(await exec('[...document.querySelectorAll("#menu-file-popup button")].map(button => button.id)'), ['new-project', 'open-project', 'recent-projects', 'save-project', 'save-project-as', 'menu-open-media', 'import-subtitles', 'menu-quit'], 'List the file commands in order')
+  assert.deepEqual(await exec('[...document.querySelectorAll("#menu-file-popup button")].map(button => button.id)'), ['new-project', 'open-project', 'recent-projects', 'save-project', 'save-project-as', 'menu-open-media', 'blank-video', 'import-subtitles', 'import-script', 'menu-quit'], 'List the file commands in order')
   assert(await exec('[...document.querySelectorAll("#menu-file-popup button")].every(button => button.querySelector("svg use"))'), 'Give every file command an icon')
   await mouse('mousePressed', 700, 250)
   await mouse('mouseReleased', 700, 250)
@@ -1521,6 +1521,107 @@ async function run() {
   await exec('document.querySelector("#project-change-dialog button[value=discard]").click()')
   await expect('document.querySelectorAll(".track-lane").length === 4', 'discard temporary edits and reopen recent project')
   assert(await exec('Array.from(document.querySelectorAll(".cue")).some(cue => cue.textContent === "新增 ASS")'))
+
+  // —— 空白视频与文稿打轴 ——
+  const scriptFixture = join(directory, 'script.txt')
+  await writeFile(scriptFixture, '第一句文稿\n第二句文稿\n第三句文稿\n')
+  const bilingualFixture = join(directory, 'script-bilingual.txt')
+  await writeFile(bilingualFixture, '第一条原文\n第一条译文\n第二条原文\n第二条译文\n')
+  const blankProjectFile = join(directory, 'blank.subx')
+  const ms = value => {
+    const [hours, minutes, rest] = value.split(':')
+    const [seconds, millis] = rest.split('.')
+    return ((Number(hours) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000 + Number(millis)
+  }
+  const pressPunch = (type, key) => contents.debugger.sendCommand('Input.dispatchKeyEvent', {
+    type, key, code: 'Key' + key.toUpperCase(), windowsVirtualKeyCode: key.toUpperCase().charCodeAt(0),
+  })
+
+  await click('new-project')
+  await expect('document.querySelectorAll(".track-lane").length === 2 && !document.querySelector("video").getAttribute("src")', 'start a blank video project')
+
+  await click('blank-video')
+  await expect('document.querySelector("#blank-video-dialog").open', 'open the blank video dialog')
+  await exec(`(() => {
+    const form = document.querySelector('#blank-video-form')
+    form.elements.color.value = '#101820'
+    form.elements.resolution.value = '1280x720'
+    form.elements.fps.value = '25'
+    form.elements.duration.value = '30'
+    form.querySelector('button[value=create]').click()
+  })()`)
+  await expect(`getComputedStyle(document.querySelector('#solid-frame')).backgroundColor === 'rgb(16, 24, 32)' &&
+    !document.querySelector('#solid-frame').hidden && document.querySelector('#media-name').textContent.includes('1280×720') &&
+    document.querySelector('#media-name').textContent.includes('25 fps')`, 'show the blank video preview')
+  await expect('document.querySelector("#play").disabled === false && document.querySelector("#ruler").dataset.frameIndex === "ready"', 'enable playback and frame ticks for the blank video')
+  await exec('document.querySelector("#play").click()')
+  await delay(500)
+  await exec('document.querySelector("#play").click()')
+  assert.notEqual(await exec('document.querySelector("#timecode").value'), '00:00:00.000', 'Advance the playhead while the blank video plays')
+
+  await click('compose-video')
+  await expect(`document.querySelector('#composition-dialog').open &&
+    document.querySelector('#composition-source').textContent.includes('空白视频') &&
+    document.querySelector('#composition-info').textContent.includes('1280 × 720')`, 'describe the blank video in the composition dialog')
+  await exec('document.querySelector("#composition-cancel").click()')
+
+  saves.unshift('blank.subx')
+  await click('save-project')
+  await expect('document.querySelector("#status").textContent === "已保存工程"', 'save the blank video project')
+  const blankProject = JSON.parse(await readFile(blankProjectFile, 'utf8'))
+  assert.equal(blankProject.media.kind, 'solid', 'Persist the blank video as solid media')
+  assert.deepEqual([blankProject.media.width, blankProject.media.height, blankProject.media.fps, blankProject.media.duration], [1280, 720, 25, 30000])
+
+  picks.unshift('script.txt')
+  await click('import-script')
+  await expect('document.querySelector("#script-dialog").open', 'open the script import dialog')
+  await exec('document.querySelector("#script-dialog button[value=choose]").click()')
+  await expect('document.querySelectorAll("#script-list .script-line").length === 3 && document.querySelector("#script-tab").getAttribute("aria-selected") === "true"', 'import a single-language script')
+
+  // 按住 J 开始第一行，按住 K 无缝接上第二行，松开 K 结束第二行。
+  await pressPunch('rawKeyDown', 'j')
+  await delay(350)
+  await pressPunch('rawKeyDown', 'k')
+  await pressPunch('keyUp', 'j')
+  await delay(350)
+  await pressPunch('keyUp', 'k')
+  await expect('document.querySelectorAll(".track-lane:first-child .cue").length === 2 && document.querySelector("#script-progress").textContent.startsWith("2 / 3")', 'punch two lines with alternating J and K')
+  const punchTimes = await exec(`[...document.querySelectorAll('.track-lane:first-child .cue')].map(cue => cue.title.split('\\n').find(line => /^\\d\\d:\\d\\d:\\d\\d\\.\\d\\d\\d – /.test(line)))`)
+  const [[firstStart, firstEnd], [secondStart, secondEnd]] = punchTimes.map(range => range.split(' – '))
+  assert.equal(firstEnd, secondStart, 'Join the next punched line exactly at the previous end: ' + JSON.stringify(punchTimes))
+  assert(ms(firstEnd) - ms(firstStart) >= 200 && ms(secondEnd) - ms(secondStart) >= 200, 'Size each punched block by how long the key was held: ' + JSON.stringify(punchTimes))
+  assert(await exec('document.querySelector("#status").textContent.startsWith("第 2 行已打轴")'), 'report the punched line')
+
+  await click('save-project')
+  await expect('document.querySelector("#status").textContent === "已保存工程"', 'save the punched script project')
+  const punchedProject = JSON.parse(await readFile(blankProjectFile, 'utf8'))
+  assert.equal(punchedProject.script.lines.length, 3, 'Persist the imported script')
+  assert(punchedProject.tracks.some(track => track.cues.some(cue => cue.scriptLine)), 'Persist the script line on each punched cue')
+
+  await click('undo')
+  await click('undo')
+  await expect('document.querySelectorAll(".track-lane .cue").length === 0 && document.querySelector("#script-progress").textContent.startsWith("0 / 3")', 'undo both punched lines')
+
+  picks.unshift('script-bilingual.txt')
+  await click('import-script')
+  await exec('document.querySelector("#script-dialog input[name=mode][value=bilingual]").click()')
+  await exec('document.querySelector("#script-dialog button[value=choose]").click()')
+  await expect('document.querySelectorAll("#script-list .script-line").length === 2', 'group a bilingual script into line pairs')
+  await pressPunch('rawKeyDown', 'j')
+  await delay(300)
+  await pressPunch('keyUp', 'j')
+  await expect(`document.querySelectorAll('.track-lane:first-child .cue').length === 1 &&
+    document.querySelectorAll('.track-lane:nth-child(2) .cue').length === 1 &&
+    document.querySelectorAll('.track-lane .cue svg').length === 2 &&
+    document.querySelector('.track-lane:first-child .cue').textContent === '第一条原文' &&
+    document.querySelector('.track-lane:nth-child(2) .cue').textContent === '第一条译文'`, 'split a punched bilingual line into two linked tracks')
+
+  picks.unshift('blank.subx')
+  await click('open-project')
+  await exec(`(() => { const dialog = document.querySelector('#project-change-dialog'); if (dialog.open) dialog.querySelector('button[value=discard]').click() })()`)
+  await expect(`document.querySelector('#media-name').textContent.includes('空白视频') &&
+    document.querySelectorAll('#script-list .script-line').length === 3 &&
+    document.querySelectorAll('.track-lane:first-child .cue').length === 2`, 'reopen the blank video project with its script and punched cues')
 
   await click('new-project')
   await expect('document.querySelectorAll(".track-lane").length === 2', 'start the independent SRT workflow')

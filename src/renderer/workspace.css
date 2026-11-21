@@ -81,6 +81,20 @@ button.primary:hover:not(:disabled) { background: #214e8b; }
 #preview-progress { display: block; width: 100%; height: 16px; accent-color: var(--accent); cursor: pointer; }
 #preview-progress:disabled { cursor: default; opacity: .45; }
 .frame { position: relative; width: 100%; height: 100%; overflow: hidden; }
+.solid-frame { position: absolute; inset: 0; }
+.script-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; font-weight: 600; }
+.script-heading button { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; }
+.script-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.script-line { display: grid; grid-template-columns: 34px 1fr auto; gap: 8px; align-items: start; padding: 6px 8px; border: 1px solid transparent; border-radius: 4px; background: #1f1f1f; cursor: pointer; }
+.script-line.current { border-color: var(--accent); background: #17304f; }
+.script-line.punched { color: #9a9a9a; }
+.script-line .script-index { color: var(--muted); font-variant-numeric: tabular-nums; }
+.script-line .script-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.script-line .script-text small { display: block; color: #a9b7c8; }
+.script-line .script-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.script-mode { display: flex; gap: 14px; margin: 4px 0 10px; }
+.script-mode label { display: flex; align-items: center; gap: 6px; }
+.script-mode input { width: auto; }
 video, #preview-canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .captions { font-family: var(--system-font); }
 .captions, #ass-overlays, .ass-layer { position: absolute; inset: 0; pointer-events: none; }

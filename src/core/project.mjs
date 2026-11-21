@@ -22,10 +22,45 @@ export function createProject() {
   return { version: 1, media: null, tracks: [], links: [], styles: [], markers: [] }
 }
 
+// 纯色空白视频：不依赖真实文件，预览由渲染进程画，合成时用 FFmpeg lavfi 生成画面。
+export function createSolidMedia({ color, width, height, fps, duration }) {
+  return { kind: 'solid', color, width, height, fps, duration }
+}
+
+export function isSolidMedia(media) {
+  return Boolean(media) && typeof media === 'object' && media.kind === 'solid' &&
+    typeof media.color === 'string' && /^#[0-9a-f]{6}$/i.test(media.color) &&
+    Number.isSafeInteger(media.width) && media.width >= 16 && media.width <= 7680 && media.width % 2 === 0 &&
+    Number.isSafeInteger(media.height) && media.height >= 16 && media.height <= 7680 && media.height % 2 === 0 &&
+    Number.isSafeInteger(media.fps) && media.fps >= 1 && media.fps <= 120 &&
+    Number.isSafeInteger(media.duration) && media.duration >= 100 && media.duration <= 86400000
+}
+
+export function validScript(script) {
+  if (!script || typeof script.bilingual !== 'boolean' || !Array.isArray(script.lines)) return false
+  const ids = new Set()
+  for (const line of script.lines) {
+    if (!line || typeof line.id !== 'string' || ids.has(line.id) || typeof line.text !== 'string') return false
+    if (line.second !== null && typeof line.second !== 'string') return false
+    if (script.bilingual && typeof line.second !== 'string') return false
+    ids.add(line.id)
+  }
+  if (script.tracks !== undefined) {
+    if (!script.tracks || typeof script.tracks !== 'object' || Array.isArray(script.tracks)) return false
+    if (script.tracks.first !== undefined && typeof script.tracks.first !== 'string') return false
+    if (script.tracks.second !== undefined && typeof script.tracks.second !== 'string') return false
+  }
+  if (script.order !== undefined && !['first', 'reverse'].includes(script.order)) return false
+  return true
+}
+
 export function validateProject(project) {
   if (project?.version !== 1 || !Array.isArray(project.tracks) || !Array.isArray(project.links) ||
-      (project.media !== null && typeof project.media !== 'string')) {
+      (project.media !== null && typeof project.media !== 'string' && !isSolidMedia(project.media))) {
     throw new Error('不支持的 SubX 工程格式')
+  }
+  if (project.script !== undefined && !validScript(project.script)) {
+    throw new Error('工程中的文稿数据无效')
   }
   if (project.settings !== undefined && (!project.settings ||
       typeof project.settings.fade !== 'boolean' || typeof project.settings.watermark !== 'boolean')) {
@@ -67,6 +102,7 @@ export function validateProject(project) {
         throw new Error('工程中的 ASS 事件无效')
       }
       if (cue.assFields !== undefined && !validFields(cue.assFields)) throw new Error('工程中的 ASS 事件属性无效')
+      if (cue.scriptLine !== undefined && typeof cue.scriptLine !== 'string') throw new Error('工程中的文稿关联无效')
       if (cue.ass) sourceRows.add(cue.ass.line)
       ids.add(cue.id)
       cueTracks.set(cue.id, track.id)
