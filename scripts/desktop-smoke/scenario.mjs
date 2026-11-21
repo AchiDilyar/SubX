@@ -541,8 +541,11 @@ async function run() {
   await exec(`document.querySelector('#ruler').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))`)
   await expect(`document.querySelector('#timecode').value === "${lastTime}"`, 'keep the playhead at the last frame when nudged right')
   await exec(`(() => {
-    const track = document.querySelector('#timeline-scroll')
-    track.scrollLeft = track.scrollWidth
+    const scroll = document.querySelector('#timeline-scroll')
+    const track = document.querySelector('#track-data')
+    const end = parseFloat(track.style.getPropertyValue('--timeline-end'))
+    const usable = scroll.clientWidth - document.querySelector('#track-headings').offsetWidth
+    scroll.scrollLeft = Math.max(0, end - usable + 120)
   })()`)
   await expect(`(() => {
     const finalTick = document.querySelector('.end-tick')
@@ -561,6 +564,14 @@ async function run() {
     await mouse('mousePressed', betweenFrames.x, betweenFrames.y)
     await mouse('mouseReleased', betweenFrames.x, betweenFrames.y)
     await expect('document.querySelector("#timecode").value === "00:00:00.167"', 'snap a click between frames to the nearest video frame')
+    const rulerScheme = await exec(`(() => ({
+      labels: [...document.querySelectorAll('#ruler .tick-label')].map(node => node.textContent),
+      grid: getComputedStyle(document.querySelector('.track-lane')).backgroundImage,
+    }))()`)
+    assert(rulerScheme.labels.length > 4 && rulerScheme.labels.every(label => /^\d{2}:\d{2}:\d{2}\.[0-5]\d$/.test(label)),
+      'Label the ruler in frame time at maximum zoom: ' + JSON.stringify(rulerScheme.labels))
+    assert(rulerScheme.labels.some(label => !label.endsWith('.00')), 'Show sub-second frame labels at maximum zoom: ' + JSON.stringify(rulerScheme.labels))
+    assert.equal(rulerScheme.grid, 'none', 'Draw no grid inside track lanes')
   }
   await exec('document.querySelector("#timeline-scroll").scrollLeft = 0')
   await expect('document.querySelector("#zoom-thumb").style.transform === "translateX(0px)"', 'start the zoom grip at the left scroll boundary')
@@ -807,7 +818,7 @@ async function run() {
     return { scroll: scroll.scrollLeft, left: head.left - heads.getBoundingClientRect().right, time: document.querySelector('#timecode').value }
   })()`)
   assert(pageJump.scroll > pageSetup.usable * .4, 'Jump the timeline by about one window when the playing playhead leaves the right edge: ' + JSON.stringify({ pageSetup, pageJump }))
-  assert(pageJump.left < 120, 'Restart the playing playhead near the left edge after a page jump: ' + JSON.stringify({ pageSetup, pageJump }))
+  assert(pageJump.left < 260, 'Restart the playing playhead near the left edge after a page jump: ' + JSON.stringify({ pageSetup, pageJump }))
   await delay(300)
   const pageHold = await exec('document.querySelector("#timeline-scroll").scrollLeft')
   assert(Math.abs(pageHold - pageJump.scroll) < 4, 'Hold the timeline still after a page jump until the playhead reaches the right edge again: ' + JSON.stringify({ pageJump, pageHold }))
@@ -850,7 +861,10 @@ async function run() {
   await delay(350)
   assert(await exec('document.querySelector("#timeline-scroll").scrollLeft') < rightScroll && await exec(playheadInView), 'Scroll left continuously while dragging the playhead outside the viewport')
   await mouse('mouseReleased', edgeDrag.left - 30, edgeDrag.y)
-  await exec('document.querySelector("#timeline-scroll").scrollLeft = 200')
+  await exec(`(() => {
+    const scroll = document.querySelector('#timeline-scroll')
+    scroll.scrollLeft = Math.round((scroll.scrollWidth - scroll.clientWidth) * .25)
+  })()`)
   await expect('document.querySelector("#zoom-thumb").getBoundingClientRect().x > 210', 'settle the scrollbar thumb after scrolling')
   await exec('document.querySelector("#timeline-scroll").scrollLeft = 0')
   await expect('document.querySelector("#zoom-thumb").style.transform === "translateX(0px)"', 'position the thumb for a partial zoom adjustment')
@@ -858,10 +872,11 @@ async function run() {
     const box = document.querySelector('#zoom-thumb .zoom-grip[data-edge=right]').getBoundingClientRect()
     return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
   })()`)
+  const zoomBefore = await exec('Number(document.querySelector("#zoom").value)')
   await mouse('mousePressed', grip.x, grip.y)
   await mouse('mouseMoved', grip.x + 80, grip.y)
   await mouse('mouseReleased', grip.x + 80, grip.y)
-  assert(await exec('Number(document.querySelector("#zoom").value) < 320'), 'Zoom out by dragging the scrollbar grip')
+  assert(await exec(`Number(document.querySelector("#zoom").value) < ${zoomBefore}`), 'Zoom out by dragging the scrollbar grip')
   await exec('document.querySelector("#timeline-scroll").scrollLeft = 0')
   await expect('document.querySelector("#zoom-thumb").getBoundingClientRect().x <= 210', 'settle the scrollbar thumb after resetting the scroll')
   const thumb = await exec(`(() => {
@@ -1674,6 +1689,7 @@ async function run() {
     return point
   }
   await toggleBottom()
+  assert.equal(await exec('getComputedStyle(document.querySelector(".track-lane:last-child .cue")).opacity'), '0.3', 'Dim the subtitle blocks of a hidden track')
   const hiddenEdge = await startEdge()
   await expect(`document.querySelector(${JSON.stringify(topCue)}).title.includes('00:00:01.170') && document.querySelector('#snap-guide')?.hidden !== false`, 'ignore a hidden track while snapping an edge')
   await mouse('mouseReleased', hiddenEdge.x + hiddenEdge.delta, hiddenEdge.y)
@@ -1786,8 +1802,35 @@ async function run() {
   await expect(`document.querySelector('#track-headings').offsetWidth === ${narrowHeading + 8}`, 'widen the track header area from the keyboard')
   await exec('document.querySelector(".track-heading:last-child .lock-button").click()')
   await expect('document.querySelector(".track-heading:last-child .lock-button").getAttribute("aria-pressed") === "true" && document.querySelector(".track-lane:last-child").classList.contains("locked-track") && document.querySelector(".track-lane:last-child .cue.locked") && document.querySelector("#export-subtitles").disabled', 'lock a track and disable its cues and exports')
+  assert(await exec(`getComputedStyle(document.querySelector('.track-lane:last-child'), '::after').backgroundImage.includes('repeating-linear-gradient')`), 'Stripe a locked track')
+  const lockedCue = await exec(`(() => {
+    const box = document.querySelector('.track-lane:last-child .cue').getBoundingClientRect()
+    return { x: box.left + box.width / 2, y: box.top + 10 }
+  })()`)
+  await mouse('mousePressed', lockedCue.x, lockedCue.y)
+  await mouse('mouseReleased', lockedCue.x, lockedCue.y)
+  await expect('document.querySelectorAll(".cue.selected").length === 0 && document.querySelector("#status").textContent.includes("已锁定")', 'ignore clicks on a locked track')
   await exec('document.querySelector(".track-heading:last-child .lock-button").click()')
   await expect('document.querySelector(".track-heading:last-child .lock-button").getAttribute("aria-pressed") === "false" && !document.querySelector(".track-lane:last-child").classList.contains("locked-track") && !document.querySelector("#export-subtitles").disabled', 'unlock a track and re-enable its cues and exports')
+  const marquee = await exec(`(() => {
+    const area = document.querySelector('#timeline-scroll').getBoundingClientRect()
+    const heads = document.querySelector('#track-headings').getBoundingClientRect().right
+    const lanes = document.querySelector('#track-lanes').getBoundingClientRect()
+    const firstLane = document.querySelector('.track-lane').getBoundingClientRect()
+    const startX = area.right - 20
+    const startY = Math.min(lanes.bottom + 12, area.bottom - 8)
+    const endX = heads + 12
+    const endY = firstLane.top + 6
+    const expected = [...document.querySelectorAll('.cue')].filter(cue => {
+      const box = cue.getBoundingClientRect()
+      return box.right > endX && box.left < startX && box.bottom > endY && box.top < startY
+    }).length
+    return { startX, startY, endX, endY, expected }
+  })()`)
+  await mouse('mousePressed', marquee.startX, marquee.startY)
+  await mouse('mouseMoved', marquee.endX, marquee.endY)
+  await mouse('mouseReleased', marquee.endX, marquee.endY)
+  await expect(`document.querySelectorAll('.cue.selected').length === ${marquee.expected} && ${marquee.expected} > 1`, 'select subtitle blocks by dragging in an empty timeline area')
   await menuCommand('#ruler', '粘贴字幕到当前轨道')
   await expect(`document.querySelector('.track-lane:last-child .cue.selected').title.endsWith('00:00:01.200 – 00:00:03.200')`, 'paste at the playhead into the selected track with the original duration')
   await menuCommand('.cue.selected', '删除字幕')

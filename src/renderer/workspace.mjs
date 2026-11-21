@@ -77,15 +77,48 @@ const undo = []
 const redo = []
 const width = timeMs => timeMs * pixelsPerSecond / 1000
 const deltaFor = px => Math.round(px * 1000 / pixelsPerSecond)
-// 标尺主刻度间隔：与 renderRuler 共用，决定主刻度与标签的间距。
-function rulerInterval() {
-  return [100, 250, 500, 1000, 2000, 5000, 10000, 30000, 60000, 300000, 900000]
-    .find(step => width(step) >= 95) ?? 3600000
+// 标尺刻度按帧率取档：帧、秒、分逐级放大；标签在有帧率时显示「时:分:秒.帧」。
+function rulerFps() {
+  if (solidMedia) return solidMedia.fps
+  if (frameTimes?.length && Number.isFinite(frameGap) && frameGap > 0) {
+    const fps = Math.round(1000 / frameGap)
+    if (fps >= 1 && fps <= 240) return fps
+  }
+  return null
 }
-// 没有帧索引时的最小刻度：优先 100 ms，放大到刻度挤不下时退回主刻度的 1/5。
+function rulerSteps() {
+  const fps = rulerFps()
+  const candidates = []
+  if (fps) {
+    const frame = 1000 / fps
+    for (const frames of [1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, 60]) candidates.push(frames * frame)
+    for (const seconds of [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200]) candidates.push(seconds * 1000)
+  } else {
+    for (const step of [100, 250, 500, 1000, 2000, 5000, 10000, 30000, 60000, 300000, 900000]) candidates.push(step)
+  }
+  candidates.sort((left, right) => left - right)
+  const major = candidates.find(step => width(step) >= 95) ?? 3600000
+  const frame = fps ? 1000 / fps : 0
+  const majorFrames = fps ? Math.round(major / frame) : 0
+  const minor = fps
+    ? (majorFrames <= 10 ? frame : (width(major / 5) >= 6 ? major / 5 : major))
+    : (width(major / 5) >= 6 ? major / 5 : major)
+  return { fps, major, minor, frameTicks: Boolean(fps) && majorFrames <= 10 }
+}
 function rulerMinor() {
-  const fallback = rulerInterval() / 5
-  return width(100) >= 8 ? Math.min(100, fallback) : fallback
+  return rulerSteps().minor
+}
+function rulerLabel(milliseconds, fps, major) {
+  if (!fps) {
+    const text = printTime(Math.round(milliseconds), '.')
+    return text.slice(0, major < 1000 ? 12 : 8)
+  }
+  const perSecond = Math.max(1, Math.round(fps))
+  const frames = Math.max(0, Math.round(milliseconds / (1000 / fps)))
+  const totalSeconds = Math.floor(frames / perSecond)
+  const pad = value => String(value).padStart(2, '0')
+  return pad(Math.floor(totalSeconds / 3600)) + ':' + pad(Math.floor(totalSeconds / 60) % 60) + ':' +
+    pad(totalSeconds % 60) + '.' + pad(frames % perSecond)
 }
 // 字幕块视觉高度等于轨道行高（CSS 的 .cue 高度与此保持一致）。
 const CUE_HEIGHT = 32
@@ -749,8 +782,12 @@ function seekFrame(milliseconds, direction = 0) {
 }
 
 // 方向键移动播放头：有帧索引时按帧，没有时按 0.1 秒；Shift 每次 1 秒。
+function pauseForSeek() {
+  if (isSolid()) pauseSolidClock()
+  else video.pause()
+}
 function nudgePlayhead(direction, shift) {
-  pausePlayback()
+  pauseForSeek()
   if (frameTimes?.length && !shift) seekFrame(playheadPosition(), direction)
   else seekFrame(playheadPosition() + direction * (shift ? 1000 : 100))
   revealTimelinePosition(time)
@@ -928,9 +965,7 @@ function timelineView() {
 }
 
 function renderRuler(start, end, limit, trackData) {
-  const interval = rulerInterval()
-  trackData.style.setProperty('--tick-size', width(interval) + 'px')
-  const framesVisible = frameTimes?.length
+  const { fps, major, minor, frameTicks } = rulerSteps()
   const ticks = []
   const markedEnds = mediaDuration && mediaDuration < limit ? [mediaDuration, limit] : [limit]
   const nearEndLabel = at => markedEnds.some(end => Math.abs(width(end - at)) < 95)
@@ -940,27 +975,18 @@ function renderRuler(start, end, limit, trackData) {
     if (title) mark.append(element('span', 'tick-label', title))
     ticks.push(mark)
   }
-  if (framesVisible) {
-    let previousLabel = -Infinity
-    let previousTick = -Infinity
-    for (let index = frameAt(start); index < frameTimes.length && frameTimes[index] <= end; index++) {
-      const at = frameTimes[index]
-      if (width(at) - previousTick < frameTickSpacing - .001) continue
-      previousTick = width(at)
-      const showLabel = width(at) - previousLabel >= 105 && !nearEndLabel(at)
-      if (showLabel) previousLabel = width(at)
-      tick(at, showLabel ? printTime(Math.round(at), '.') : '', ' frame-tick')
-    }
-  } else {
-    const minor = rulerMinor()
-    for (let at = Math.floor(start / minor) * minor; at < limit && at <= end; at += minor) {
-      const major = at % interval === 0
-      const printLabel = major && (at === 0 || !nearEndLabel(at))
-      tick(at, printLabel ? printTime(at, '.').slice(0, interval < 1000 ? 12 : 8) : '', major ? ' major-tick' : '')
-    }
+  const first = Math.floor(start / minor)
+  const last = Math.ceil(end / minor)
+  for (let index = first; index <= last; index++) {
+    const at = index * minor
+    if (at < 0 || at >= limit) continue
+    const ratio = at / major
+    const isMajor = Math.abs(ratio - Math.round(ratio)) < 1e-6
+    const label = isMajor && (at === 0 || !nearEndLabel(at)) ? rulerLabel(at, fps, major) : ''
+    tick(at, label, (isMajor ? ' major-tick' : '') + (frameTicks ? ' frame-tick' : ''))
   }
   for (const at of markedEnds) {
-    if (end >= at && start <= at) tick(at, printTime(at, '.').slice(0, at % 1000 ? 12 : 8), ' major-tick end-tick')
+    if (end >= at && start <= at) tick(at, rulerLabel(at, fps, major), ' major-tick end-tick')
   }
   for (const at of project.markers ?? []) {
     if (at < start || at > end) continue
@@ -2973,7 +2999,7 @@ const ruler = $('ruler')
 let rulerPointer
 let rulerScrollFrame = 0
 function seekWithPointer(event) {
-  pausePlayback()
+  pauseForSeek()
   const bounds = scroll.getBoundingClientRect()
   const x = Math.max(bounds.left + $('track-headings').offsetWidth, Math.min(bounds.right - 1, event.clientX))
   seekFrame(snapRulerTime((x - ruler.getBoundingClientRect().left) * 1000 / pixelsPerSecond))
@@ -3062,11 +3088,14 @@ function endMarquee(event, commit = true) {
   renderViewport()
 }
 $('track-data').addEventListener('pointerdown', event => {
-  if (event.button !== 0 || toolMode !== 'select' || linkMode || !event.target.closest('.track-lane') || event.target.closest('.cue')) return
+  if (event.button !== 0 || toolMode !== 'select' || linkMode || event.target.closest('.cue')) return
+  // 空白区域框选：轨道内、轨道下方的空白，以及轨道容器本身都可以起框。
+  const lane = event.target.closest('.track-lane')
+  if (!lane && !event.target.closest('#track-lanes') && event.target !== $('track-data')) return
   event.preventDefault()
   const point = marqueePoint(event)
   marquee = { id: event.pointerId, ...point, clientX: event.clientX, clientY: event.clientY, selected, selectedCues: new Set(selectedCues), active: false }
-  event.target.closest('.track-lane').setPointerCapture(event.pointerId)
+  ;(lane ?? $('track-lanes')).setPointerCapture(event.pointerId)
 })
 $('track-data').addEventListener('pointermove', updateMarquee)
 $('track-data').addEventListener('pointerup', endMarquee)
@@ -3221,7 +3250,7 @@ function fitDuration() {
 
 function zoomBounds(usable) {
   const min = usable * 1000 / fitDuration()
-  return { min, max: Math.max(min, 320, frameTickSpacing * 1000 / frameGap) }
+  return { min, max: Math.max(min, 960, frameTickSpacing * 1000 / frameGap) }
 }
 
 function setZoom(next, anchor, offset = 0) {
