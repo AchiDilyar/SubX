@@ -19,7 +19,7 @@ export function addTopTrack(tracks, cues = []) {
 }
 
 export function createProject() {
-  return { version: 1, media: null, tracks: [], links: [], styles: [], markers: [] }
+  return { version: 1, media: null, tracks: [], links: [], bindings: [], styles: [], markers: [] }
 }
 
 // 纯色空白视频：不依赖真实文件，预览由渲染进程画，合成时用 FFmpeg lavfi 生成画面。
@@ -52,6 +52,46 @@ export function validScript(script) {
   }
   if (script.order !== undefined && !['first', 'reverse'].includes(script.order)) return false
   return true
+}
+
+export function normalizeStyleNames(project) {
+  const seen = new Map()
+  const replacements = new Map()
+  const styles = []
+  function blankStyleLine(style) {
+    if (style.trackId === undefined) return
+    const track = project.tracks.find(item => item.id === style.trackId)
+    if (track?.ass && Number.isSafeInteger(style.line) && track.ass.lines[style.line] !== undefined) {
+      track.ass.lines[style.line] = ''
+    }
+  }
+  for (const style of project.styles ?? []) {
+    const name = Object.entries(style?.fields ?? {}).find(([key]) => key.toLowerCase() === 'name')?.[1]?.trim().toLowerCase() ?? ''
+    const existing = name ? seen.get(name) : undefined
+    if (existing) {
+      // 一个工程相当于一个 ASS 文件：同名样式合并成一条全局样式，被合并的样式行从轨道脚本里清空。
+      blankStyleLine(style)
+      replacements.set(style.id, existing.id)
+      if (existing.trackId !== undefined) {
+        blankStyleLine(existing)
+        existing.trackId = undefined
+        delete existing.line
+        delete existing.prefix
+        delete existing.columns
+      }
+      existing.isProjectDefault = Boolean(existing.isProjectDefault || style.isProjectDefault)
+      continue
+    }
+    if (name) seen.set(name, style)
+    styles.push(style)
+  }
+  project.styles = styles
+  for (const track of project.tracks ?? []) {
+    for (const cue of track.cues ?? []) {
+      if (replacements.has(cue.style)) cue.style = replacements.get(cue.style)
+    }
+  }
+  return project
 }
 
 export function validateProject(project) {
@@ -120,6 +160,7 @@ export function validateProject(project) {
       cueTracks.set(cue.id, track.id)
     }
   }
+  const styleNames = new Set()
   for (const style of styles) {
     const track = project.tracks.find(item => item.id === style?.trackId)
     if (!style || typeof style.id !== 'string' || styleIds.has(style.id) ||
@@ -128,6 +169,9 @@ export function validateProject(project) {
         (style.trackId !== undefined && (!track?.ass || !validAssRow(style, track.ass.lines.length)))) {
       throw new Error('工程中的 ASS 样式无效')
     }
+    const name = Object.entries(style.fields).find(([key]) => key.toLowerCase() === 'name')[1].trim().toLowerCase()
+    if (styleNames.has(name)) throw new Error('工程中的样式名称重复')
+    styleNames.add(name)
     styleIds.add(style.id)
   }
   for (const track of project.tracks) {
@@ -144,6 +188,15 @@ export function validateProject(project) {
       throw new Error('工程中的字幕链接无效')
     }
     pair.forEach(id => linked.add(id))
+  }
+  const bindings = project.bindings ?? []
+  if (!Array.isArray(bindings)) throw new Error('工程中的字幕绑定无效')
+  const bound = new Set()
+  for (const group of bindings) {
+    if (!Array.isArray(group) || group.length < 2 || group.some(id => !ids.has(id) || bound.has(id))) {
+      throw new Error('工程中的字幕绑定无效')
+    }
+    group.forEach(id => bound.add(id))
   }
 }
 
@@ -171,6 +224,7 @@ export function removeCue(project, id) {
   if (!track) return false
   track.cues = track.cues.filter(cue => cue.id !== id)
   project.links = project.links.filter(pair => !pair.includes(id))
+  project.bindings = (project.bindings ?? []).map(group => group.filter(cueId => cueId !== id)).filter(group => group.length > 1)
   return true
 }
 

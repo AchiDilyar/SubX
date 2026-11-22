@@ -6,7 +6,7 @@ import { basename, dirname, extname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { validateProject } from '../core/project.mjs'
+import { normalizeStyleNames, validateProject } from '../core/project.mjs'
 import { bundledEncoders, encodeVideo, findEncoder, readFrameTimes, readWaveform, validateComposition } from './video-export.mjs'
 
 const entry = 'subx://app/renderer/index.html'
@@ -297,13 +297,18 @@ async function initialize() {
     return handle
   }
 
-  const projects = new Set(Array.isArray(recent) ? recent.filter(file => typeof file === 'string') : [])
+  const projects = new Map()
+  for (const entry of Array.isArray(recent) ? recent : []) {
+    const file = typeof entry === 'string' ? entry : entry?.file
+    const openedAt = typeof entry === 'string' ? 0 : Number(entry?.openedAt) || 0
+    if (typeof file === 'string' && file) projects.set(file, openedAt)
+  }
   let persistRecent = Promise.resolve()
   function remember(file, exists = true) {
     projects.delete(file)
-    if (exists) projects.add(file)
-    while (projects.size > 12) projects.delete(projects.values().next().value)
-    const snapshot = JSON.stringify([...projects])
+    if (exists) projects.set(file, Date.now())
+    while (projects.size > 12) projects.delete(projects.keys().next().value)
+    const snapshot = JSON.stringify([...projects].map(([file, openedAt]) => ({ file, openedAt })))
     persistRecent = persistRecent.catch(() => {}).then(() => writeAtomically(recentFile, snapshot))
     return persistRecent.catch(error => console.warn('Could not save recent projects:', error.message))
   }
@@ -375,6 +380,7 @@ async function initialize() {
       if (error instanceof SyntaxError) throw new Error('无法打开工程：文件内容不是有效的 SubX 工程。')
       throw error
     }
+    normalizeStyleNames(project)
     validateProject(project)
     await remember(file)
     const media = typeof project.media === 'string' ? await mediaReference(project.media, window, session) : null
@@ -393,7 +399,9 @@ async function initialize() {
     if (typeof file !== 'string' || !/\.subx$/i.test(file)) return null
     return readProject(window, file)
   })
-  bind('project:recent', () => [...projects].reverse())
+  bind('project:recent', () => [...projects]
+    .map(([file, openedAt]) => ({ file, openedAt }))
+    .sort((left, right) => right.openedAt - left.openedAt))
   async function saveProject(window, project, documentId, saveAs) {
     validateProject(project)
     const current = documents.get(window)

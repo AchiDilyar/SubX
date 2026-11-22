@@ -123,13 +123,16 @@ export function createAssPreview(host, reportFailure, redraw) {
     }
   }
 
+  // 移动字幕块时只更新播放时间，不重建 libass 轨道：逐帧重建会让预览字幕闪烁，
+  // 而且每次都要重新解析整轨字幕；松手提交后 render() 会同步一次最终内容。
+  // 裁剪边界时仍实时重建，方便一边拖一边看字幕何时进出画面。
   function draw(milliseconds, drag) {
     const w = Math.round(host.clientWidth * devicePixelRatio)
     const h = Math.round(host.clientHeight * devicePixelRatio)
     if (!w || !h) return
     for (const layer of layers.values()) {
       if (layer.canvas.dataset.ready !== 'true') continue
-      const changed = drag?.delta && layer.track.cues.some(cue => drag.ids.has(cue.id))
+      const changed = drag?.edge && layer.track.cues.some(cue => drag.ids.has(cue.id))
       const content = changed
         ? renderAss(layer.track, layer.styles, drag, layer.fade)
         : layer.content

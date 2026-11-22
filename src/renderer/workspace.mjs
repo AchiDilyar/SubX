@@ -1,4 +1,4 @@
-import { createProject, createSolidMedia, createTrack, addTopTrack, isSolidMedia, trackIndex, cueTiming, findCue, inspectTrackSplit, linkedIds, moveDelta, removeCue, splitTrack, trimDelta } from '../core/project.mjs'
+import { createProject, createSolidMedia, createTrack, addTopTrack, isSolidMedia, trackIndex, cueTiming, findCue, inspectTrackSplit, linkedIds, moveDelta, normalizeStyleNames, removeCue, splitTrack, trimDelta } from '../core/project.mjs'
 import { alignCue, frameBoundaries, nearestBoundary } from '../core/frame-grid.mjs'
 import { inspectSrt, printTime, readTime, writeSrt } from '../core/srt.mjs'
 import { assStyleResetCues, assTextCues, captureCue, pasteCue, groupAssLayers, importAssLayers, moveCuesToTrack, fallbackAssStyle, field, newStyle, readAss, renameAssStyleReset, setField, writeAss } from '../core/ass.mjs'
@@ -11,6 +11,7 @@ const video = $('video')
 const scroll = $('timeline-scroll')
 const zoomBar = $('timeline-zoom')
 const zoomThumb = $('zoom-thumb')
+const zoomPlayhead = $('zoom-playhead')
 const canvas = $('preview-canvas')
 const frame = $('frame')
 const stage = $('monitor-stage')
@@ -18,6 +19,8 @@ const monitor = document.querySelector('.monitor')
 const playheadMargin = 8
 const timelineTail = 2000
 const frameTickSpacing = 12
+// 缩放条滑块的最小视觉宽度；低于这个宽度时两个圆形把柄会挤在一起。
+const ZOOM_THUMB_MIN = 24
 const app = window.subx
 document.documentElement.classList.toggle('inset-window-controls', app.hasInsetWindowControls)
 const emptyDuration = 10000
@@ -39,6 +42,8 @@ let selectedStyle
 let linkStart
 let linkMode = false
 let snapping = true
+// 拖动播放头时命中的字幕块边缘，用于显示吸附参考线。
+let playheadSnapTime
 let time = 0
 let presentedFrameTime = null
 let frameRequest
@@ -146,10 +151,18 @@ function rulerLabel(milliseconds, fps, major) {
 const CUE_HEIGHT = 32
 const CUE_LANE_GAP = 0
 const CUE_LANE_PADDING = 0
+// 字幕块的内边距加边框约 20px；低于这个宽度时按真实时长画紧凑块，否则块会撑到 20px 并盖住右边的块。
+const DENSE_CUE_WIDTH = 20
 const trackFor = id => project.tracks.find(track => track.cues.some(cue => cue.id === id))
 const track = () => project.tracks.find(track => track.id === currentTrack)
 const trackLabel = track => 'S' + trackIndex(project.tracks, track)
 const styleFor = id => project.styles.find(style => style.id === id)
+const bindingGroupOf = id => (project.bindings ?? []).find(group => group.includes(id))
+function expandBindings(ids) {
+  const result = new Set(ids)
+  for (const id of ids) for (const member of bindingGroupOf(id) ?? []) result.add(member)
+  return result
+}
 const styleName = style => field(style.fields, 'Name').trim()
 
 function status(message) {
@@ -300,20 +313,9 @@ function openMenus(trigger, index = 0) {
 }
 
 function syncMenuState() {
-  const current = track()
-  const cue = findCue(project, selected)
   $('menu-open-media').disabled = $('open-media').disabled
   $('menu-undo').disabled = !undo.length
   $('menu-redo').disabled = !redo.length
-  $('menu-delete-cue').disabled = !cue || Boolean(trackFor(cue.id)?.locked)
-  $('split-track').disabled = !current?.cues.length || Boolean(current?.ass) || Boolean(current?.locked)
-  $('menu-delete-track').disabled = !current || Boolean(current?.locked)
-  $('menu-add-cue').disabled = Boolean(current?.locked)
-  $('menu-next-review').disabled = !reviewCues.length
-  $('menu-complete-review').disabled = !cue?.splitNeedsReview
-  $('menu-play').disabled = $('play').disabled
-  const quality = $('quality').value
-  for (const value of ['1', '2', '4']) $('menu-quality-' + value).setAttribute('aria-checked', String(value === quality))
 }
 
 // The native menu uses the same commands and state as the in-window menu.
@@ -399,24 +401,9 @@ window.addEventListener('blur', () => closeMenus())
 action('menu-open-media', () => $('open-media').click())
 action('menu-undo', () => $('undo').click())
 action('menu-redo', () => $('redo').click())
-action('menu-delete-cue', () => deleteSelectedCue())
-action('menu-add-cue', () => $('add-cue').click())
-action('menu-add-track', () => $('add-track').click())
-action('menu-next-review', () => $('next-review').click())
-action('menu-complete-review', () => $('complete-review').click())
-action('menu-play', () => $('play').click())
-action('menu-styles-tab', () => $('styles-tab').click())
-action('menu-settings-tab', () => $('settings-tab').click())
 action('menu-quit', () => app.quit())
 action('menu-shortcuts', () => $('shortcuts-dialog').showModal())
 action('menu-homepage', () => app.openExternal('https://github.com/AchiDilyar/SubX'))
-for (const value of ['1', '2', '4']) {
-  action('menu-quality-' + value, () => {
-    const quality = $('quality')
-    quality.value = value
-    quality.dispatchEvent(new Event('change'))
-  })
-}
 
 function edit(change) {
   const before = { project: structuredClone(project), revision }
@@ -458,7 +445,8 @@ function reset(next, media, documentHandle = null) {
   projectDocument = documentHandle
   cueDrafts.clear()
   styleDrafts.clear()
-  project = { styles: [], ...next }
+  project = { styles: [], bindings: [], ...next }
+  normalizeStyleNames(project)
   punch = null
   scriptIndex = project.script ? nextScriptIndex(0) : 0
   selected = undefined
@@ -586,6 +574,7 @@ function playheadPosition() {
 function updatePlayhead() {
   $('playhead').style.left = width(playheadPosition()) + 'px'
   renderPlayingCue()
+  updateZoomPlayhead()
 }
 
 function renderPlayingCue() {
@@ -1041,7 +1030,6 @@ function render() {
 function refreshTrackControls() {
   const current = track()
   const locked = Boolean(current?.locked)
-  $('split-track').disabled = !current?.cues.length || Boolean(current?.ass) || locked
   $('export-subtitles').disabled = locked || (!current?.ass && !current?.cues.length)
   $('add-cue').disabled = locked
   const selectedCue = findCue(project, selected)
@@ -1073,6 +1061,39 @@ function overlapsForRows() {
   overlapCacheRows = rows
   overlapCacheMap = new Map(rows.map(row => [row, rowOverlaps(row)]))
   return overlapCacheMap
+}
+
+// 播放头磁吸用的字幕块边缘：按当前 rows 缓存，滚动和播放时不会重复排序。
+let edgeCacheRows = null
+let edgeCacheEdges = null
+function cueEdgeTimes() {
+  if (edgeCacheRows === rows) return edgeCacheEdges
+  edgeCacheRows = rows
+  const edges = []
+  for (const row of rows) {
+    if (!row.track.visible) continue
+    for (const cue of row.ordered) edges.push(cue.start, cue.end)
+  }
+  edges.sort((a, b) => a - b)
+  edgeCacheEdges = edges
+  return edges
+}
+
+// 指针移动播放头时的磁吸：命中字幕块边缘就吸附过去，否则回落到最小刻度。
+function magneticPlayheadTime(milliseconds) {
+  if (!snapping) return undefined
+  const edges = cueEdgeTimes()
+  if (!edges.length) return undefined
+  const edge = nearestBoundary(edges, milliseconds)
+  if (edge === undefined) return undefined
+  return Math.abs(width(edge - milliseconds)) <= 7 ? edge : undefined
+}
+
+function updateSnapGuide() {
+  const guide = $('snap-guide')
+  const at = drag?.snapTime ?? playheadSnapTime
+  guide.hidden = at === undefined
+  if (!guide.hidden) guide.style.left = width(at) + 'px'
 }
 
 function renderRuler(start, end, limit, trackData, overlapIntervals = []) {
@@ -1134,9 +1155,7 @@ function renderViewport() {
   trackData.style.width = contentWidth + 'px'
   const timeLimit = timelineEnd()
   trackData.style.setProperty('--timeline-end', width(timeLimit) + 'px')
-  const guide = $('snap-guide')
-  guide.hidden = drag?.snapTime === undefined
-  if (!guide.hidden) guide.style.left = width(drag.snapTime) + 'px'
+  updateSnapGuide()
   const visibleStart = deltaFor(Math.max(0, scroll.scrollLeft - 110))
   const visibleEnd = deltaFor(scroll.scrollLeft + usable + 110)
   const overlapRows = overlapsForRows()
@@ -1207,13 +1226,14 @@ function renderViewport() {
       const displayText = row.track.ass || cue.assText ? cue.text.replace(/\{[^}]*\}/g, '') : cue.text
       const linked = linkedIds(project, cue.id).length === 2
       const title = (cue.splitNeedsReview ? '需手工检查 · ' : '') + displayText
-      const label = displayText.replace(/\n/g, ' / ') || '空字幕'
-      if (block.textContent !== label || Boolean(block.firstElementChild) !== linked) {
+      const label = displayText.replace(/\n/g, ' / ')
+      if (block.textContent !== label || Boolean(block.querySelector('svg use[href="#i-link"]')) !== linked) {
         block.replaceChildren(...(linked ? [icon('link'), label] : [label]))
       }
       const durationWidth = width(end - start)
+      const dense = durationWidth < DENSE_CUE_WIDTH
       block.title = displayText
-      block.setAttribute('aria-label', title)
+      block.setAttribute('aria-label', title || '空字幕块')
       block.dataset.range = printTime(start, '.') + ' – ' + printTime(end, '.')
       const isSelected = cue.id === selected || cue.id === linkStart || selectedCues.has(cue.id)
       block.classList.toggle('selected', isSelected)
@@ -1222,6 +1242,14 @@ function renderViewport() {
       block.classList.toggle('review', Boolean(cue.splitNeedsReview))
       block.classList.toggle('locked', Boolean(row.track.locked))
       block.classList.toggle('drag-overlap', overlaps?.has(cue.id) ?? false)
+      block.classList.toggle('dense', dense)
+      const bound = Boolean(bindingGroupOf(cue.id))
+      block.classList.toggle('bound', bound)
+      let bindingDot = block.querySelector('.cue-binding-dot')
+      if (bound && !bindingDot) {
+        bindingDot = element('span', 'cue-binding-dot')
+        block.append(bindingDot)
+      } else if (!bound && bindingDot) bindingDot.remove()
       block.style.left = width(start) + 'px'
       block.style.top = row.laneById.get(cue.id) * (CUE_HEIGHT + CUE_LANE_GAP) + CUE_LANE_PADDING + 'px'
       block.style.height = CUE_HEIGHT + 'px'
@@ -1229,7 +1257,12 @@ function renderViewport() {
       block.classList.toggle('crossing-track', Boolean(targetRow))
       block.style.transform = targetRow ? 'translateY(' + (targetRow.lane.offsetTop - row.lane.offsetTop) + 'px)' : ''
       const trimming = drag?.edge && drag.ids.has(cue.id)
-      block.style.width = Math.max(trimming ? 1 : 14, durationWidth) + 'px'
+      // 紧凑块按真实时长绘制并留 1px 间隙；普通块保持原样，避免相邻块共用一条边。
+      // 裁剪时只把最小宽度降到 1px，不能把当前宽度直接写成 1px，否则一拖就缩成一条线。
+      const visualWidth = dense
+        ? Math.max(trimming ? 1 : 2, durationWidth - 1)
+        : Math.max(1, durationWidth)
+      block.style.width = visualWidth + 'px'
       block.dataset.start = String(start)
       block.dataset.end = String(end)
     }
@@ -1323,6 +1356,9 @@ function pick(track, cue, keepGroup = false) {
   if (!keepGroup) selectedCues.clear()
   selected = cue.id
   currentTrack = track.id
+  if (!linkMode && bindingGroupOf(cue.id)) {
+    selectedCues = expandBindings(new Set([...selectedCues, cue.id]))
+  }
   if (linkMode) {
     if (linkStart === cue.id || !linkStart && linkedIds(project, cue.id).length > 1) {
       if (linkedIds(project, cue.id).length > 1) {
@@ -1358,12 +1394,23 @@ function pick(track, cue, keepGroup = false) {
 }
 
 function cueEdge(event, cue) {
-  if (width(cue.end - cue.start) < 14) return null
+  if (width(cue.end - cue.start) < DENSE_CUE_WIDTH) return null
   const bounds = event.currentTarget.getBoundingClientRect()
   const threshold = Math.min(6, bounds.width / 3)
   if (event.clientX <= bounds.left + threshold) return 'start'
   if (event.clientX >= bounds.right - threshold) return 'end'
   return null
+}
+
+// 多选裁剪时所有选中块共用同一个位移，取各块允许范围的交集。
+function trimLimits(cues, edge) {
+  let min = -Infinity
+  let max = Infinity
+  for (const item of cues) {
+    min = Math.max(min, trimDelta(item, edge, -Infinity))
+    max = Math.min(max, trimDelta(item, edge, Infinity))
+  }
+  return { min, max }
 }
 
 function startDrag(event, track, cue) {
@@ -1383,9 +1430,12 @@ function startDrag(event, track, cue) {
     return
   }
   const edge = cueEdge(event, cue)
-  const group = !edge && !linkMode && selectedCues.size > 1 && selectedCues.has(cue.id)
-  pick(track, cue, group)
+  // 多选时移动和裁剪都作用到全部选中块；裁剪时每块按同一个位移调整同一条边。
+  const keepGroup = !linkMode && selectedCues.size > 1 && selectedCues.has(cue.id)
+  pick(track, cue, keepGroup)
   if (linkMode) return
+  // 绑定组在 pick 时已经展开进 selectedCues：直接拖任意一个绑定块也要整组移动。
+  const group = !linkMode && selectedCues.size > 1 && selectedCues.has(cue.id)
   event.preventDefault()
   const movingIds = new Set(group ? selectedCues : [cue.id])
   const ids = new Set(movingIds)
@@ -1404,7 +1454,10 @@ function startDrag(event, track, cue) {
       for (const other of row.ordered) if (!ids.has(other.id)) boundaries.push(other.start, other.end)
     }
   }
-  const limit = edge ? requested => trimDelta(cue, edge, requested) : requested => moveDelta(cues, requested)
+  const limits = edge ? trimLimits(cues, edge) : undefined
+  const limit = edge
+    ? requested => Math.max(limits.min, Math.min(limits.max, requested))
+    : requested => moveDelta(cues, requested)
   const snapEdges = edge ? [cue[edge]] : [cue.start, cue.end]
   drag = { pointer: event.pointerId, startX: event.clientX, scrollLeft: scroll.scrollLeft, startY: event.clientY, source: track, sourceRowIndex: rows.findIndex(row => row.track === track),
     cues, targets, ids, movingIds, edge, grid: editingBoundaries(),
@@ -1532,7 +1585,7 @@ function endDrag(pointer, commit) {
         selectedCues.clear()
       }
     })
-    const message = destination ? '已移动到 ' + trackLabel(destination.track) : edge ? '已调整字幕边界' : '已移动' + (adjustment.group ? '成组字幕' : cues.length > 1 ? '链接字幕' : '字幕')
+    const message = destination ? '已移动到 ' + trackLabel(destination.track) : edge ? (cues.length > 1 ? '已调整 ' + cues.length + ' 条字幕边界' : '已调整字幕边界') : '已移动' + (adjustment.group ? '成组字幕' : cues.length > 1 ? '链接字幕' : '字幕')
     status(message + (overlaps?.size ? ' · 同轨字幕重叠' : ''))
   } else {
     renderViewport()
@@ -1553,16 +1606,52 @@ function switchTab(tab, preview = true) {
 
 // 配置区变窄时标签放不下：右侧出现箭头，点一下翻到下一页标签。
 const tabsScroll = $('tabs-scroll')
-const tabsPrev = $('tabs-prev')
-const tabsNext = $('tabs-next')
+const tabsMoreLeft = $('tabs-more-left')
+const tabsMoreRight = $('tabs-more-right')
+const tabsMenu = $('tabs-menu')
+function visibleTabButtons() {
+  return [...tabsScroll.querySelectorAll('[role=tab]')].filter(button => !button.hidden)
+}
+function hiddenTabButtons(side) {
+  const view = tabsScroll.getBoundingClientRect()
+  return visibleTabButtons().filter(button => {
+    const box = button.getBoundingClientRect()
+    return side === 'left' ? box.left < view.left - 1 : box.right > view.right + 1
+  })
+}
 function updateTabPages() {
   if (!tabsScroll) return
-  const max = tabsScroll.scrollWidth - tabsScroll.clientWidth
-  tabsPrev.hidden = max <= 1 || tabsScroll.scrollLeft <= 1
-  tabsNext.hidden = max <= 1 || tabsScroll.scrollLeft >= max - 1
+  tabsMoreLeft.hidden = hiddenTabButtons('left').length === 0
+  tabsMoreRight.hidden = hiddenTabButtons('right').length === 0
 }
-function pageTabs(direction) {
-  tabsScroll.scrollBy({ left: direction * Math.max(72, tabsScroll.clientWidth - 40), behavior: 'smooth' })
+function showTabsMenu(side) {
+  const hidden = hiddenTabButtons(side)
+  if (!hidden.length) return
+  tabsMenu.replaceChildren(...hidden.map(button => {
+    const item = element('button')
+    item.type = 'button'
+    item.setAttribute('role', 'menuitem')
+    const iconNode = button.querySelector('svg')
+    if (iconNode) item.append(iconNode.cloneNode(true))
+    item.append(element('span', '', button.textContent.trim()))
+    if (button.getAttribute('aria-selected') === 'true') item.setAttribute('aria-selected', 'true')
+    item.addEventListener('click', () => {
+      tabsMenu.hidePopover()
+      const name = button.id.replace(/-tab$/, '')
+      switchTab(name)
+      revealTab(name)
+    })
+    return item
+  }))
+  const anchor = side === 'left' ? tabsMoreLeft : tabsMoreRight
+  const box = anchor.getBoundingClientRect()
+  tabsMenu.style.left = '0px'
+  tabsMenu.style.top = '0px'
+  tabsMenu.showPopover()
+  const width = tabsMenu.offsetWidth
+  const height = tabsMenu.offsetHeight
+  tabsMenu.style.left = Math.max(4, Math.min(innerWidth - width - 4, side === 'left' ? box.left : box.right - width)) + 'px'
+  tabsMenu.style.top = Math.min(innerHeight - height - 4, box.bottom + 4) + 'px'
 }
 function revealTab(name) {
   const button = $(name + '-tab')
@@ -1572,8 +1661,8 @@ function revealTab(name) {
   if (box.left < view.left) tabsScroll.scrollLeft -= view.left - box.left + 6
   else if (box.right > view.right) tabsScroll.scrollLeft += box.right - view.right + 6
 }
-tabsPrev.addEventListener('click', () => pageTabs(-1))
-tabsNext.addEventListener('click', () => pageTabs(1))
+tabsMoreLeft.addEventListener('click', () => showTabsMenu('left'))
+tabsMoreRight.addEventListener('click', () => showTabsMenu('right'))
 tabsScroll.addEventListener('scroll', updateTabPages, { passive: true })
 new ResizeObserver(updateTabPages).observe(tabsScroll)
 
@@ -1916,10 +2005,9 @@ function renderStyleList(projectChanged = false) {
     }
     const previousName = styleName(style)
     const conflicts = name !== previousName && project.styles.some(item =>
-      styleName(item).toLowerCase() === name.toLowerCase() &&
-      (item.trackId === style.trackId || item.trackId === undefined || style.trackId === undefined))
+      item.id !== style.id && styleName(item).toLowerCase() === name.toLowerCase())
     if (conflicts) {
-      status('同一轨道或可用于该轨道的工程样式已使用这个名称。')
+      status('样式名称必须全工程唯一。')
       return
     }
     const cueEdits = []
@@ -2532,23 +2620,46 @@ action('new-project', () => changeProject(() => {
   status('已新建工程')
 }))
 action('open-project', () => changeProject(async () => openResult(await app.openProject())).catch(error => status(errorText(error))))
+function recentTimeLabel(openedAt) {
+  if (!Number.isFinite(openedAt) || openedAt <= 0) return ''
+  const date = new Date(openedAt)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  const pad = value => String(value).padStart(2, '0')
+  const clock = pad(date.getHours()) + ':' + pad(date.getMinutes())
+  const sameDay = (left, right) => left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() && left.getDate() === right.getDate()
+  if (diff >= 0 && diff < 60000) return '刚刚'
+  if (diff >= 0 && diff < 3600000) return Math.max(1, Math.floor(diff / 60000)) + ' 分钟前'
+  if (sameDay(date, now)) return '今天 ' + clock
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (sameDay(date, yesterday)) return '昨天 ' + clock
+  if (date.getFullYear() === now.getFullYear()) return (date.getMonth() + 1) + '月' + date.getDate() + '日 ' + clock
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' + clock
+}
+
 action('recent-projects', () => withProjectOperation(async () => {
-  const projects = await app.recentProjects()
+  const entries = (await app.recentProjects())
+    .map(item => typeof item === 'string' ? { file: item, openedAt: 0 } : item)
+    .filter(item => item?.file)
   const dialog = $('recent-dialog')
-  const names = projects.map(path => {
-    const name = path.split(/[\\/]/).pop()
-    const folder = path.slice(0, Math.max(0, path.length - name.length)).replace(/[\\/]$/, '')
+  const rows = entries.map(({ file, openedAt }) => {
+    const name = file.split(/[\\/]/).pop()
+    const folder = file.slice(0, Math.max(0, file.length - name.length)).replace(/[\\/]$/, '')
     const button = element('button', 'recent-item')
     button.type = 'button'
-    button.title = path
-    button.append(element('span', 'recent-item-name', name), element('span', 'recent-item-path', folder))
+    button.title = file
+    const text = element('div', 'recent-item-text')
+    text.append(element('span', 'recent-item-name', name), element('span', 'recent-item-path', folder))
+    button.append(text, element('span', 'recent-item-time', recentTimeLabel(openedAt)))
     button.addEventListener('click', () => {
       dialog.close()
-      changeProject(async () => openResult(await app.openProject(path))).catch(error => status(errorText(error)))
+      changeProject(async () => openResult(await app.openProject(file))).catch(error => status(errorText(error)))
     })
     return button
   })
-  $('recent-list').replaceChildren(...(names.length ? names : [element('p', 'muted', '暂无最近工程')]))
+  $('recent-list').replaceChildren(...(rows.length ? rows : [element('p', 'muted', '暂无最近工程')]))
   dialog.showModal()
 }))
 async function writeCurrentProject(saveAs) {
@@ -2783,7 +2894,7 @@ function focusTimelineCue(id) {
 action('add-cue', () => {
   if (switchingProject || drag) return
   if (track()?.locked) {
-    status('轨道已锁定，解锁后可添加字幕')
+    status('轨道已锁定，解锁后可添加字幕块')
     return
   }
   pausePlayback()
@@ -2806,7 +2917,7 @@ action('add-cue', () => {
   const block = rows.find(row => row.buttons.has(selected))?.buttons.get(selected)
   block?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   focusTimelineCue(selected)
-  status('已添加空字幕 · 按 Enter 或双击编辑正文')
+  status('已添加空字幕块 · 按 Enter 或双击编辑正文')
 })
 
 const cueEditor = $('cue-editor-popover')
@@ -2992,13 +3103,115 @@ function selectTrackCues() {
   const owner = track()
   if (!owner?.cues.length) return
   if (linkMode) setLinkMode(false)
-  selectedCues = new Set(owner.cues.map(cue => cue.id))
+  selectedCues = expandBindings(new Set(owner.cues.map(cue => cue.id)))
   selected = undefined
   refreshTrackControls()
   renderCueForm()
   refreshInspectorPreview()
   renderViewport()
   status('已选中「' + trackLabel(owner) + '」的全部字幕')
+}
+
+
+const cueStyleMenu = $('cue-style-menu')
+
+function selectAllCues() {
+  const ids = project.tracks.flatMap(track => track.cues.map(cue => cue.id))
+  if (!ids.length) { status('当前工程没有字幕块'); return }
+  if (linkMode) setLinkMode(false)
+  selectedCues = expandBindings(new Set(ids))
+  selected = undefined
+  refreshTrackControls()
+  renderCueForm()
+  refreshInspectorPreview()
+  renderViewport()
+  status('已全选 ' + selectedCues.size + ' 条字幕块')
+}
+
+function selectCuesAroundPlayhead(where) {
+  const position = Math.round(playheadPosition())
+  const ids = []
+  for (const track of project.tracks) {
+    for (const cue of track.cues) {
+      if (where === 'before' ? cue.end <= position : cue.start >= position) ids.push(cue.id)
+    }
+  }
+  if (!ids.length) {
+    status(where === 'before' ? '播放头之前没有字幕块' : '播放头之后没有字幕块')
+    return
+  }
+  if (linkMode) setLinkMode(false)
+  selectedCues = expandBindings(new Set(ids))
+  selected = undefined
+  refreshTrackControls()
+  renderCueForm()
+  refreshInspectorPreview()
+  renderViewport()
+  status('已选中播放头' + (where === 'before' ? '之前 ' : '之后 ') + selectedCues.size + ' 条字幕块')
+}
+
+function clearSelectedCueText() {
+  const ids = selectedCueIds()
+  if (!ids.length) return
+  edit(() => {
+    for (const id of ids) {
+      const cue = findCue(project, id)
+      if (!cue) continue
+      cue.text = ''
+      cueDrafts.delete(id)
+    }
+  })
+  status(ids.length > 1 ? '已清空 ' + ids.length + ' 条字幕正文' : '已清空字幕正文')
+}
+
+function toggleCueBinding() {
+  const ids = selectedCueIds()
+  if (ids.length < 2) return
+  const group = bindingGroupOf(ids[0])
+  if (group && ids.every(id => group.includes(id))) {
+    edit(() => { project.bindings = (project.bindings ?? []).filter(item => item !== group) })
+    status('已解除绑定')
+    return
+  }
+  selectedCues = new Set(ids)
+  edit(() => {
+    project.bindings = (project.bindings ?? []).filter(item => !item.some(id => ids.includes(id)))
+    project.bindings.push([...ids])
+  })
+  status('已绑定 ' + ids.length + ' 条字幕块')
+}
+
+function showCueStyleMenu(anchor) {
+  const ids = selectedCueIds()
+  if (!ids.length) return
+  const trackIds = new Set(ids.map(id => trackFor(id)?.id))
+  const styles = project.styles.filter(style => style.trackId === undefined || ids.every(id => trackFor(id)?.id === style.trackId))
+  cueStyleMenu.replaceChildren(...styles.map(style => {
+    const item = element('button')
+    item.type = 'button'
+    item.setAttribute('role', 'menuitem')
+    item.append(element('span', '', styleName(style) || '默认样式'))
+    if (ids.every(id => findCue(project, id)?.style === style.id)) item.setAttribute('aria-selected', 'true')
+    item.addEventListener('click', () => {
+      cueStyleMenu.hidePopover()
+      edit(() => {
+        for (const id of ids) {
+          const cue = findCue(project, id)
+          if (cue) cue.style = style.id
+        }
+      })
+      status('已设置字幕样式')
+    })
+    return item
+  }))
+  const box = anchor?.getBoundingClientRect?.() ?? { left: innerWidth / 2, right: innerWidth / 2, bottom: innerHeight / 2 }
+  cueStyleMenu.style.left = '0px'
+  cueStyleMenu.style.top = '0px'
+  cueStyleMenu.showPopover()
+  const width = cueStyleMenu.offsetWidth
+  const height = cueStyleMenu.offsetHeight
+  cueStyleMenu.style.left = Math.max(4, Math.min(innerWidth - width - 4, box.left)) + 'px'
+  cueStyleMenu.style.top = Math.min(innerHeight - height - 4, box.bottom + 4) + 'px'
 }
 
 const timelineMenu = $('timeline-menu')
@@ -3017,12 +3230,25 @@ scroll.addEventListener('contextmenu', event => {
   const block = event.target.closest('.cue')
   const owner = block && trackFor(block.dataset.cueId)
   const cue = owner?.cues.find(cue => cue.id === block.dataset.cueId)
+  if (cue && selected !== cue.id && !selectedCues.has(cue.id)) pick(owner, cue)
+  const ids = cue ? selectedCueIds() : []
+  const locked = ids.some(id => trackFor(id)?.locked)
+  const group = cue ? bindingGroupOf(cue.id) : undefined
+  const bound = Boolean(group) && ids.length >= 2 && ids.every(id => group.includes(id))
   const commands = cue ? [
-    ['copy', '复制字幕', () => copyTimelineCue(owner, cue)],
-    ['trash', '删除字幕', () => deleteSelectedCue(cue.id), Boolean(owner?.locked)],
+    ['style', '设置样式', () => showCueStyleMenu(block), locked],
+    ['close', '清空', clearSelectedCueText, locked],
+    ['copy', '复制', copySelection, locked],
+    ['trash', '删除', () => deleteSelectedCue(), locked],
+    ['link', bound ? '解除绑定' : '绑定', toggleCueBinding, ids.length < 2 || locked],
+    ['split', '拆分双语…', () => splitTrackCommand(owner), Boolean(owner?.locked) || Boolean(owner?.ass) || !owner?.cues.length],
+    ['link', '链接字幕', () => setLinkMode(true), Boolean(owner?.locked)],
   ] : [
-    ['copy', '粘贴字幕到当前轨道', pasteTimelineCue, !clipboard || !track() || Boolean(track()?.locked)],
-    ['select', '选中当前轨道全部字幕块', selectTrackCues, !track()?.cues.length],
+    ['select', '全选', selectAllCues],
+    ['track', '选中当前轨道全部字幕块', selectTrackCues, !track()?.cues.length],
+    ['trim-start', '选中播放头之前全部字幕块', () => selectCuesAroundPlayhead('before')],
+    ['trim-end', '选中播放头之后全部字幕块', () => selectCuesAroundPlayhead('after')],
+    ['cue', '添加字幕块', () => $('add-cue').click(), Boolean(track()?.locked)],
   ]
   timelineMenu.replaceChildren(...commands.map(([symbol, label, command, disabled]) => {
     const button = element('button')
@@ -3060,31 +3286,33 @@ function hasEmptyLine(text) {
 }
 
 action('delete-cue', () => deleteSelectedCue())
-action('split-track', () => withProjectOperation(async () => {
-  const current = track()
-  if (!current?.cues.length || current.ass) return
-  if (current.locked) {
-    status('轨道已锁定，解锁后可拆分双语')
-    return
-  }
-  if (current.cues.some(cue => cueDrafts.has(cue.id))) {
-    status('请先应用或取消当前轨道的字幕草稿，再拆分双语。')
-    return
-  }
-  const dialog = $('split-dialog')
-  dialog.returnValue = 'cancel'
-  updateSplitPreview()
-  const choice = await new Promise(resolve => {
-    dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true })
-    dialog.showModal()
+function splitTrackCommand(owner = track()) {
+  return withProjectOperation(async () => {
+    const current = owner
+    if (!current?.cues.length || current.ass) return
+    if (current.locked) {
+      status('轨道已锁定，解锁后可拆分双语')
+      return
+    }
+    if (current.cues.some(cue => cueDrafts.has(cue.id))) {
+      status('请先应用或取消当前轨道的字幕草稿，再拆分双语。')
+      return
+    }
+    const dialog = $('split-dialog')
+    dialog.returnValue = 'cancel'
+    updateSplitPreview()
+    const choice = await new Promise(resolve => {
+      dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true })
+      dialog.showModal()
+    })
+    if (choice !== 'confirm' || dialog.querySelector('button[value="confirm"]').disabled) return
+    edit(() => {
+      splitTrack(project, current.id, $('split-order').value === 'reverse')
+      currentTrack = project.tracks[0].id
+    })
+    status('已拆分双语字幕')
   })
-  if (choice !== 'confirm' || dialog.querySelector('button[value="confirm"]').disabled) return
-  edit(() => {
-    splitTrack(project, current.id, $('split-order').value === 'reverse')
-    currentTrack = project.tracks[0].id
-  })
-  status('已拆分双语字幕')
-}))
+}
 $('split-order').addEventListener('change', updateSplitPreview)
 action('undo', () => restore(undo, redo))
 action('redo', () => restore(redo, undo))
@@ -3157,7 +3385,6 @@ $('project-fade-duration').addEventListener('change', event => {
 })
 const toolModes = { 'select-tool': 'select', 'split-tool': 'split', 'select-forward': 'select-forward', 'select-backward': 'select-backward' }
 for (const [id, mode] of Object.entries(toolModes)) action(id, () => setToolMode(mode))
-action('link-tool', () => setLinkMode(!linkMode))
 action('snap-tool', () => {
   snapping = !snapping
   setToolState('snap-tool', snapping)
@@ -3179,10 +3406,7 @@ setWaveformMode(waveformMode)
 setToolState('snap-tool', snapping)
 function setToolMode(mode) {
   toolMode = mode
-  if (linkMode) {
-    linkMode = false
-    setToolState('link-tool', false)
-  }
+  linkMode = false
   for (const [id, value] of Object.entries(toolModes)) setToolState(id, value === mode)
   status({
     select: '选择工具',
@@ -3195,7 +3419,6 @@ function setToolMode(mode) {
 function setLinkMode(enabled) {
   linkMode = enabled
   linkStart = undefined
-  setToolState('link-tool', enabled)
   if (enabled) {
     for (const id of Object.keys(toolModes)) setToolState(id, false)
     status('选择不同轨道的两个字幕块，或点击已链接的字幕块解除链接。')
@@ -3265,7 +3488,7 @@ function selectCueRange(owner, cue, direction) {
   const index = ordered.findIndex(item => item.id === cue.id)
   if (index < 0) return
   const slice = direction === 'forward' ? ordered.slice(index) : ordered.slice(0, index + 1)
-  selectedCues = new Set(slice.map(item => item.id))
+  selectedCues = expandBindings(new Set(slice.map(item => item.id)))
   selected = undefined
   currentTrack = owner.id
   refreshTrackControls()
@@ -3313,7 +3536,7 @@ function deleteCurrentTrack() {
   status('已删除轨道「' + trackLabel(owner) + '」，可撤销')
 }
 action('delete-track', deleteCurrentTrack)
-action('menu-delete-track', deleteCurrentTrack)
+
 action('split-cue', splitSelectedCue)
 action('trim-start', () => trimSelectedToPlayhead('start'))
 action('trim-end', () => trimSelectedToPlayhead('end'))
@@ -3364,7 +3587,10 @@ function setPreviewMaximized(maximize) {
 }
 action('fullscreen-preview', () => setPreviewMaximized(!monitor.classList.contains('preview-maximized')))
 $('preview-progress').addEventListener('input', event => {
-  if (mediaDuration && hasPicture()) seek(snapPlayheadTime(mediaDuration * Number(event.target.value) / 1000))
+  if (mediaDuration && hasPicture()) {
+    const requested = mediaDuration * Number(event.target.value) / 1000
+    seek(magneticPlayheadTime(requested) ?? snapPlayheadTime(requested))
+  }
 })
 // 原生 range 在隐藏窗口/自定义外观下拖动不稳定，这里自己按指针位置定位。
 const progressInput = $('preview-progress')
@@ -3372,7 +3598,8 @@ function seekFromProgress(event) {
   const box = progressInput.getBoundingClientRect()
   if (!box.width || !mediaDuration || !hasPicture()) return
   const fraction = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width))
-  seek(snapPlayheadTime(mediaDuration * fraction))
+  const requested = mediaDuration * fraction
+  seek(magneticPlayheadTime(requested) ?? snapPlayheadTime(requested))
 }
 progressInput.addEventListener('pointerdown', event => {
   if (event.button !== 0 || !mediaDuration || !hasPicture()) return
@@ -3495,7 +3722,10 @@ function seekWithPointer(event) {
   pauseForSeek()
   const bounds = scroll.getBoundingClientRect()
   const x = Math.max(bounds.left + $('track-headings').offsetWidth, Math.min(bounds.right - 1, event.clientX))
-  seekFrame(snapRulerTime((x - ruler.getBoundingClientRect().left) * 1000 / pixelsPerSecond))
+  const requested = (x - ruler.getBoundingClientRect().left) * 1000 / pixelsPerSecond
+  playheadSnapTime = magneticPlayheadTime(requested)
+  seekFrame(playheadSnapTime ?? snapRulerTime(requested))
+  updateSnapGuide()
 }
 function scrollRulerPointer() {
   if (!rulerPointer) return
@@ -3514,6 +3744,8 @@ function scrollRulerPointer() {
 function endRulerPointer(event) {
   if (rulerPointer?.id !== event.pointerId) return
   rulerPointer = undefined
+  playheadSnapTime = undefined
+  updateSnapGuide()
   cancelAnimationFrame(rulerScrollFrame)
   rulerScrollFrame = 0
 }
@@ -3559,10 +3791,13 @@ function updateMarquee(event) {
     const laneTop = $('track-lanes').offsetTop + row.lane.offsetTop
     for (const cue of row.ordered) {
       const cueTop = laneTop + row.laneById.get(cue.id) * (CUE_HEIGHT + CUE_LANE_GAP) + CUE_LANE_PADDING
-      if (width(cue.start) < right && width(cue.start) + Math.max(14, width(cue.end - cue.start)) > left &&
+      const cueWidth = width(cue.end - cue.start)
+      const blockWidth = cueWidth < DENSE_CUE_WIDTH ? Math.max(2, cueWidth - 1) : Math.max(1, cueWidth)
+      if (width(cue.start) < right && width(cue.start) + blockWidth > left &&
           cueTop < bottom && cueTop + CUE_HEIGHT > top) selectedCues.add(cue.id)
     }
   }
+  selectedCues = expandBindings(selectedCues)
   refreshTrackControls()
   renderCueForm()
   renderViewport()
@@ -3786,19 +4021,36 @@ function wheelZoomFactor(deltaY) {
   return Math.min(1.5, Math.max(0.66, Math.exp(-deltaY * 0.0018)))
 }
 
+let zoomMetrics
 function renderZoomBar() {
   const barWidth = zoomBar.clientWidth
   if (!barWidth) return
   const { usable, maxScroll } = timelineView()
-  const thumbWidth = fitZoom ? barWidth : Math.min(barWidth - 1, Math.max(24, Math.floor(usable / width(fitDuration()) * barWidth)))
+  const thumbWidth = fitZoom ? barWidth : Math.min(barWidth - 1, Math.max(ZOOM_THUMB_MIN, Math.floor(usable / width(fitDuration()) * barWidth)))
   const travel = barWidth - thumbWidth
   const thumbLeft = maxScroll > 0 ? Math.round(travel * Math.min(1, scroll.scrollLeft / maxScroll)) : 0
   zoomThumb.style.width = thumbWidth + 'px'
   zoomThumb.style.transform = 'translateX(' + thumbLeft + 'px)'
+  zoomMetrics = { barWidth, thumbWidth, thumbLeft, travel, maxScroll, usable }
+  updateZoomPlayhead()
   zoomBar.setAttribute('aria-valuemin', '0')
   zoomBar.setAttribute('aria-valuemax', String(Math.round(maxScroll)))
   zoomBar.setAttribute('aria-valuenow', String(Math.round(Math.min(scroll.scrollLeft, maxScroll))))
   zoomBar.setAttribute('aria-valuetext', printTime(deltaFor(scroll.scrollLeft), '.') + ' 起 · ' + Math.round(pixelsPerSecond) + ' 像素每秒')
+}
+
+// 播放头滚出时间轴视口时，在底部滚动条上留一条红线标出它的位置。
+function updateZoomPlayhead() {
+  if (!zoomMetrics) return
+  const { barWidth, thumbLeft, travel, maxScroll, usable } = zoomMetrics
+  const position = playheadPosition()
+  const visibleStart = deltaFor(scroll.scrollLeft)
+  const visibleEnd = deltaFor(scroll.scrollLeft + usable)
+  const outside = position < visibleStart - .5 || position > visibleEnd + .5
+  zoomPlayhead.hidden = !outside || maxScroll <= 0
+  if (zoomPlayhead.hidden) return
+  const x = thumbLeft + (width(position) - scroll.scrollLeft) * travel / maxScroll
+  zoomPlayhead.style.left = Math.max(0, Math.min(barWidth - 2, Math.round(x))) + 'px'
 }
 
 let zoomDrag
@@ -3810,7 +4062,6 @@ function startZoomDrag(event, kind, edge) {
     edge,
     startX: event.clientX,
     startScroll: scroll.scrollLeft,
-    startLeft: deltaFor(scroll.scrollLeft),
     startSpan: usable * 1000 / pixelsPerSecond,
     barWidth: zoomBar.clientWidth,
     travel: zoomBar.clientWidth - zoomThumb.offsetWidth,
@@ -3822,7 +4073,8 @@ function startZoomDrag(event, kind, edge) {
   }
   zoomBar.focus({ preventScroll: true })
   zoomThumb.classList.add('dragging')
-  if (kind === 'zoom') event.currentTarget.classList.add('grabbing')
+  // 抓住任意一侧把柄时，两侧把柄一起加粗描边，提示正在缩放。
+  if (kind === 'zoom') zoomThumb.classList.add('gripping')
   event.preventDefault()
   event.stopPropagation()
   event.currentTarget.setPointerCapture(event.pointerId)
@@ -3838,23 +4090,48 @@ for (const grip of zoomBar.querySelectorAll('.zoom-grip')) {
   })
 }
 
-// 缩放拖动的目标：让被拖的把柄始终跟着指针走。用与 renderZoomBar 相同的布局公式
-// 反解缩放倍率，先粗扫再局部细化，避免滚动锚点带来的非线性偏差。
+// 与 renderZoomBar 相同的布局公式：给定可见跨度，算出左右把柄在缩放条上的位置，
+// 供把柄拖动时反解倍率。滑块宽度触底后这段映射会出现平台，调用方另行处理。
 function zoomGripAt(span) {
   const { usable, barWidth, duration, contentDuration, anchor, edge } = zoomDrag
   if (span >= duration - .001) return edge === 'left' ? 0 : barWidth
   const pxPerSecond = usable * 1000 / span
-  const thumbWidth = Math.min(barWidth - 1, Math.max(24, Math.floor(usable / (duration * pxPerSecond / 1000) * barWidth)))
+  const thumbWidth = Math.min(barWidth - 1, Math.max(ZOOM_THUMB_MIN, Math.floor(usable / (duration * pxPerSecond / 1000) * barWidth)))
   const contentWidth = Math.max(usable, contentDuration * pxPerSecond / 1000)
   const maxScroll = Math.max(0, contentWidth - usable)
   const scrollLeft = Math.max(0, anchor.time * pxPerSecond / 1000 - anchor.offset)
   const thumbLeft = maxScroll > 0 ? (barWidth - thumbWidth) * Math.min(1, scrollLeft / maxScroll) : 0
   return edge === 'left' ? thumbLeft : thumbLeft + thumbWidth
 }
+// 把柄的指针位置反解成可见跨度。滑块宽度有 24px 下限，长工程缩放到一定程度后
+// 把柄位置会停住不再变化；越过这段平台后按对数比例继续缩放，拖到条边时能到最大倍率。
 function zoomSpanForGrip(dx) {
-  const { startSpan, duration, usable } = zoomDrag
-  const target = zoomGripAt(startSpan) + dx
+  const { startSpan, duration, usable, edge, barWidth } = zoomDrag
+  const startGrip = zoomGripAt(startSpan)
+  const target = startGrip + dx
   const minSpan = usable * 1000 / zoomBounds(usable).max
+  // 滑块宽度触底（floor(barWidth * span / duration) <= 24）的跨度上界。
+  const clampSpan = Math.min(duration, Math.max(minSpan, (ZOOM_THUMB_MIN + 1) * duration / barWidth))
+  const hasPlateau = clampSpan > minSpan + .5
+  const inwardExtreme = edge === 'right' ? 0 : barWidth
+  const outwardExtreme = edge === 'right' ? barWidth : 0
+  const logSpan = (from, to, fraction) => from * Math.pow(to / from, Math.max(0, Math.min(1, fraction)))
+  const inward = edge === 'right' ? target < startGrip : target > startGrip
+  if (hasPlateau && startSpan <= clampSpan + .5) {
+    // 起点已经在平台里：把柄不再移动，按指针离条边的距离对倍率做对数映射。
+    const travel = Math.abs((inward ? inwardExtreme : outwardExtreme) - startGrip)
+    return inward
+      ? logSpan(startSpan, minSpan, Math.abs(target - startGrip) / Math.max(1, travel))
+      : logSpan(startSpan, duration, Math.abs(target - startGrip) / Math.max(1, travel))
+  }
+  if (hasPlateau) {
+    const clampGrip = zoomGripAt(clampSpan)
+    if (edge === 'right' ? target < clampGrip - .5 : target > clampGrip + .5) {
+      const travel = Math.abs(clampGrip - inwardExtreme)
+      return logSpan(clampSpan, minSpan, Math.abs(target - clampGrip) / Math.max(1, travel))
+    }
+  }
+  // 滑块宽度还没触底时仍然让把柄跟手：在候选跨度里找把柄位置最接近指针的一个。
   let best = startSpan
   let bestError = Infinity
   const steps = 96
@@ -3894,8 +4171,7 @@ function pointerZoomMove(event) {
 function endZoomDrag(event) {
   if (!zoomDrag || (event && event.pointerId !== zoomDrag.pointer)) return
   zoomDrag = undefined
-  zoomThumb.classList.remove('dragging')
-  for (const grip of zoomBar.querySelectorAll('.zoom-grip')) grip.classList.remove('grabbing')
+  zoomThumb.classList.remove('dragging', 'gripping')
 }
 
 window.addEventListener('pointermove', pointerZoomMove)
@@ -3962,6 +4238,7 @@ function connectDivider(id, horizontal) {
   const limit = horizontal ? 190 : 255
   function apply(pixels, total) {
     parent.style.setProperty(property, Math.max(limit, Math.min(total * .62, pixels)) + 'px')
+    updateTabPages()
   }
   const handle = divider.querySelector('.divider-handle')
   handle.addEventListener('pointerdown', event => {

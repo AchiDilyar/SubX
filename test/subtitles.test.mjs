@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createProject, createTrack, cueTiming, moveDelta, removeCue, splitTrack, trimDelta, validateProject } from '../src/core/project.mjs'
+import { createProject, createTrack, cueTiming, moveDelta, normalizeStyleNames, removeCue, splitTrack, trimDelta, validateProject } from '../src/core/project.mjs'
 import { readSrt, writeSrt } from '../src/core/srt.mjs'
 import { assTextCues, captureCue, pasteCue, groupAssLayers, importAssLayers, moveCuesToTrack, readAss, renameAssStyleReset, renderAss, writeAss } from '../src/core/ass.mjs'
 
@@ -241,17 +241,20 @@ test('pasting an ASS event preserves duration, appearance and tags across confli
   const originalText = String.raw`{\rSpeaker\i1}字幕\NSubtitle`
   const source = add('source.ass', fixture(42, originalText))
   const target = add('target.ass', fixture(22, 'Existing'))
+  // 一个工程相当于一个 ASS 文件：同名样式合并成一条，不再按轨道各存一份。
+  normalizeStyleNames(project)
+  assert.equal(project.styles.length, 1)
   const clipboard = captureCue(source, source.cues[0], project.styles)
   const copy = pasteCue(target, clipboard, 3000, project.styles)
   const repeat = pasteCue(target, clipboard, 6000, project.styles)
   target.cues.push(copy, repeat)
   assert.deepEqual([copy.start, copy.end, copy.ass, repeat.style], [3000, 4400, undefined, copy.style])
-  assert.equal(project.styles.length, 3)
+  assert.equal(project.styles.length, 1)
   assert.doesNotThrow(() => validateProject(JSON.parse(JSON.stringify(project))))
   const output = writeAss(target, project.styles)
-  assert.match(output, /Style: Speaker 副本,Arial,42/)
-  assert.match(output, /Dialogue: 2,0:00:03\.00,0:00:04\.40,Speaker 副本,Actor,15,20,25,,\{\\rSpeaker 副本\\i1\}字幕\\NSubtitle/)
-  assert.equal(writeAss(source, project.styles), source.ass.lines.join('\n'))
+  assert.match(output, /Style: Speaker,Arial,42/)
+  assert.match(output, /Dialogue: 2,0:00:03\.00,0:00:04\.40,Speaker,Actor,15,20,25,,\{\\rSpeaker\\i1\}字幕\\NSubtitle/)
+  assert.match(writeAss(source, project.styles), /Style: Speaker,Arial,42/)
 })
 
 test('sparse ASS layers fill bottom-up indexed tracks and export the layer after a move', () => {

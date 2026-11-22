@@ -96,6 +96,15 @@ async function run() {
     const status = await exec('document.getElementById("status")?.textContent')
     throw Error(description + ': ' + status)
   }
+  const menuCommand = async (target, label) => {
+    await exec(`(() => {
+      const node = document.querySelector(${JSON.stringify(target)})
+      const box = node.getBoundingClientRect()
+      node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: box.left + 12, clientY: box.top + 8, button: 2 }))
+    })()`)
+    await expect(`document.querySelector('#timeline-menu:popover-open')`, 'open the timeline context menu')
+    await exec(`Array.from(document.querySelectorAll('#timeline-menu button')).find(item => item.textContent === ${JSON.stringify(label)}).click()`)
+  }
 
   await expect('document.getElementById("ruler").children.length > 0', 'load Electron workspace')
   assert.equal(await exec('document.querySelector("#timecode").value'), '00:00:00.00', 'Use a 30 fps timebase for empty projects')
@@ -103,6 +112,41 @@ async function run() {
   await click('settings-tab')
   assert.equal(await exec('getComputedStyle(document.querySelector("#settings-tab .icon")).color'), 'rgb(255, 255, 255)', 'Show the other active tab icon in white')
   assert.notEqual(await exec('getComputedStyle(document.querySelector("#styles-tab .icon")).color'), 'rgb(255, 255, 255)', 'Keep inactive tab icons muted')
+  await click('styles-tab')
+  const tabStyles = await exec(`(() => {
+    const active = getComputedStyle(document.querySelector('#styles-tab'))
+    const inactive = getComputedStyle(document.querySelector('#settings-tab'))
+    return { underline: active.borderBottomWidth, activeColor: active.color, inactiveColor: inactive.color }
+  })()`)
+  assert.equal(tabStyles.underline, '0px', 'Remove the active tab underline')
+  const tabPoint = await exec(`(() => { const box = document.querySelector('#settings-tab').getBoundingClientRect(); return { x: box.left + box.width / 2, y: box.top + box.height / 2 } })()`)
+  await mouse('mouseMoved', tabPoint.x, tabPoint.y)
+  await delay(150)
+  const tabHover = await exec(`(() => { const style = getComputedStyle(document.querySelector('#settings-tab')); return { background: style.backgroundColor, color: style.color } })()`)
+  assert.equal(tabHover.background, 'rgba(0, 0, 0, 0)', 'Keep tab hover free of a background block')
+  assert.notEqual(tabHover.color, tabStyles.inactiveColor, 'Brighten the hovered tab text')
+  await mouse('mouseMoved', 700, 250)
+  await exec(`document.querySelector('#tabs-scroll').style.flex = '0 1 160px'`)
+  await delay(300)
+  await exec(`document.querySelector('#tabs-scroll').dispatchEvent(new Event('scroll'))`)
+  await delay(150)
+  const tabOverflow = await exec(`(() => ({ left: !document.querySelector('#tabs-more-left').hidden, right: !document.querySelector('#tabs-more-right').hidden }))()`)
+  assert(tabOverflow.left || tabOverflow.right, 'Show an ellipsis when tabs overflow: ' + JSON.stringify(tabOverflow))
+  await exec(`(document.querySelector('#tabs-more-right').hidden ? document.querySelector('#tabs-more-left') : document.querySelector('#tabs-more-right')).click()`)
+  await delay(200)
+  const tabMenu = await exec(`(() => ({ open: document.querySelector('#tabs-menu').matches(':popover-open'), items: [...document.querySelectorAll('#tabs-menu button')].map(button => button.textContent.trim()) }))()`)
+  assert(tabMenu.open && tabMenu.items.length > 0, 'List the hidden tabs in the ellipsis menu: ' + JSON.stringify(tabMenu))
+  await exec('document.querySelector("#tabs-menu button").click()')
+  await delay(300)
+  const revealedTab = await exec(`(() => {
+    const tab = document.querySelector('[role=tab][aria-selected=true]')
+    const view = document.querySelector('#tabs-scroll').getBoundingClientRect()
+    const box = tab.getBoundingClientRect()
+    return box.left >= view.left - 1 && box.right <= view.right + 1
+  })()`)
+  assert(revealedTab, 'Reveal the chosen tab after picking it from the ellipsis menu')
+  await exec(`document.querySelector('#tabs-scroll').style.removeProperty('flex')`)
+  await delay(250)
   await click('styles-tab')
   const wordmarks = await exec(`(() => {
     const brand = document.querySelector('.brand img')
@@ -124,9 +168,7 @@ async function run() {
     const nativeMenus = Menu.getApplicationMenu().items
     assert.deepEqual(nativeMenus.slice(1).map(item => item.label), ['文件', '编辑', '导出', '关于'], 'Match the native menu groups')
     const nativeEdit = nativeMenus.find(item => item.label === '编辑')
-    nativeEdit.submenu.items.find(item => item.label === '1/4 预览').click()
-    await expect('document.querySelector("#quality").value === "4"', 'execute a native menu command')
-    await exec('(() => { const quality = document.querySelector("#quality"); quality.value = "1"; quality.dispatchEvent(new Event("change")) })()')
+    assert.deepEqual(nativeEdit.submenu.items.map(item => item.label), ['撤销', '重做'], 'Keep only undo and redo in the native edit menu')
   }
   await click('menu-file')
   await expect('!document.querySelector("#menu-file-popup").hidden && document.querySelector("#menu-file").getAttribute("aria-expanded") === "true"', 'open the file menu with icon items')
@@ -137,8 +179,9 @@ async function run() {
   await expect('document.querySelector("#menu-file-popup").hidden && document.querySelector("#menu-file").getAttribute("aria-expanded") === "false"', 'close the file menu when clicking outside')
   await click('menu-edit')
   await expect('!document.querySelector("#menu-edit-popup").hidden', 'open the edit menu')
-  await click('menu-quality-4')
-  await expect('document.querySelector("#quality").value === "4"', 'switch the preview quality from the edit menu')
+  assert.deepEqual(await exec('[...document.querySelectorAll("#menu-edit-popup button")].map(button => button.id)'), ['menu-undo', 'menu-redo'], 'Keep only undo and redo in the edit menu')
+  await exec('(() => { const quality = document.querySelector("#quality"); quality.value = "4"; quality.dispatchEvent(new Event("change")) })()')
+  await expect('document.querySelector("#quality").value === "4"', 'switch the preview quality from the preview select')
   await exec('(() => { const quality = document.querySelector("#quality"); quality.value = "1"; quality.dispatchEvent(new Event("change")) })()')
   await click('menu-about')
   await click('menu-shortcuts')
@@ -253,16 +296,13 @@ async function run() {
     actions: [...document.querySelectorAll('.timeline-actions button')].map(button => button.id),
     states: [...document.querySelectorAll('.timeline-states button')].map(button => button.id),
     addTrack: Boolean(document.querySelector('.heading-spacer #add-track')) && document.querySelector('.heading-spacer #add-track').textContent.trim() === '',
-    menuDeleteTrack: Boolean(document.querySelector('#menu-edit-popup #menu-delete-track')),
-    menuSplit: Boolean(document.querySelector('#menu-edit-popup #split-track')),
-    toolbarSplit: Boolean(document.querySelector('.timeline-controls #split-track'))
+    editItems: [...document.querySelectorAll('#menu-edit-popup button')].map(button => button.id)
   })`))
   assert.deepEqual(timelineLayout.rail, ['select-tool', 'split-tool', 'select-forward', 'select-backward'], 'Lay out the four cursor modes on the timeline toolrail')
   assert.deepEqual(timelineLayout.actions, ['add-cue', 'undo', 'redo', 'split-cue', 'trim-start', 'trim-end', 'timeline-delete', 'toggle-marker'], 'Lay out the instant actions in the timeline header')
   assert.deepEqual(timelineLayout.states, ['snap-tool', 'waveform-mode'], 'Lay out the timeline state toggles on the right')
   assert(timelineLayout.addTrack, 'Place an icon-only add-track button in the timeline heading row')
-  assert(timelineLayout.menuDeleteTrack, 'Offer a delete-track command in the edit menu')
-  assert(timelineLayout.menuSplit && !timelineLayout.toolbarSplit, 'Keep the bilingual split command in the edit menu only')
+  assert.deepEqual(timelineLayout.editItems, ['menu-undo', 'menu-redo'], 'Keep the edit menu limited to undo and redo')
   assert.equal(await exec('document.querySelector("#snap-tool").getAttribute("aria-pressed")'), 'true', 'Enable snapping by default')
   assert.equal(await exec('document.querySelector("#waveform-mode").getAttribute("aria-pressed")'), 'true', 'Show the waveform by default')
   assert.equal(await exec('document.querySelector("#waveform-mode").title.includes("对称")'), true, 'Start with the symmetric waveform')
@@ -478,7 +518,7 @@ async function run() {
   await exec(`(() => { for (let i = 0; i < 15; i++) window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })) })()`)
   await expect('document.querySelector("#timecode").value === "00:00:01.15"', 'move the playhead before adding an overlapping cue')
   await click('add-cue')
-  assert.equal(await exec('document.querySelector(".cue.selected").textContent'), '空字幕')
+  assert.equal(await exec('document.querySelector(".cue.selected").textContent'), '')
   // 一条轨道只有一行：重叠字幕块不能上下叠成两行。
   assert(await exec(`(() => {
     const blocks = [...document.querySelectorAll('.cue')]
@@ -508,7 +548,7 @@ async function run() {
   await click('undo')
   await expect('document.querySelector(".cue")?.textContent === "第一条字幕"', 'restore deleted cue')
   await click('undo')
-  await expect('document.querySelector(".cue")?.textContent === "空字幕"', 'undo text while retaining the timed block')
+  await expect('document.querySelector(".cue")?.textContent === ""', 'undo text while retaining the timed block')
   await click('undo')
   await expect('document.querySelectorAll(".track-lane").length === 2', 'undo first cue and retain the two starter tracks')
   await exec(`(() => { for (let i = 0; i < 15; i++) window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true })) })()`)
@@ -523,7 +563,7 @@ async function run() {
   await expect('document.querySelectorAll(".cue").length === 0', 'clear the saved test project')
   picks.unshift('blank-block.subx')
   await click('open-project')
-  await expect('document.querySelector(".cue")?.textContent === "空字幕"', 'reopen the empty timed cue')
+  await expect('document.querySelector(".cue")?.textContent === ""', 'reopen the empty timed cue')
   await chooseExport('srt')
   await expect('document.querySelector("#status").textContent.includes("没有可导出的字幕正文")', 'explain an all-empty SRT export')
   await click('new-project')
@@ -590,6 +630,14 @@ async function run() {
   }
   await exec('document.querySelector("#timeline-scroll").scrollLeft = 0')
   await expect('document.querySelector("#zoom-thumb").style.transform === "translateX(0px)"', 'start the zoom grip at the left scroll boundary')
+  const zoomBarGeometry = await exec(`(() => {
+    const bar = document.querySelector('#timeline-zoom').getBoundingClientRect()
+    const thumb = document.querySelector('#zoom-thumb').getBoundingClientRect()
+    const grips = [...document.querySelectorAll('.zoom-grip')].map(grip => { const box = grip.getBoundingClientRect(); return { width: box.width, height: box.height } })
+    return { bar: bar.height, thumb: thumb.height, grips }
+  })()`)
+  assert.equal(zoomBarGeometry.thumb, zoomBarGeometry.bar, 'Match the drag bar height to the zoom track: ' + JSON.stringify(zoomBarGeometry))
+  assert(zoomBarGeometry.grips.every(grip => Math.abs(grip.height - zoomBarGeometry.thumb) < .01 && Math.abs(grip.width - zoomBarGeometry.thumb) < .01), 'Match both zoom grip diameters to the drag bar height: ' + JSON.stringify(zoomBarGeometry))
   const fullGrip = await exec(`(() => {
     const grip = document.querySelector('#zoom-thumb .zoom-grip[data-edge=right]').getBoundingClientRect()
     const bar = document.querySelector('#timeline-zoom').getBoundingClientRect()
@@ -772,6 +820,14 @@ async function run() {
     return { leftTime: scroll.scrollLeft * 1000 / scale, scale, hidden: head.left >= area.right, x: heads.right + 40, y: area.top + 90 }
   })()`)
   assert(offscreenZoom.hidden, 'Keep the playhead outside the zoomed-in viewport for the left-anchor check')
+  const offscreenMarker = await exec(`(() => {
+    const marker = document.querySelector('#zoom-playhead')
+    const bar = document.querySelector('#timeline-zoom').getBoundingClientRect()
+    const box = marker.getBoundingClientRect()
+    return { hidden: marker.hidden, inside: box.left >= bar.left - 1 && box.right <= bar.right + 1, width: box.width }
+  })()`)
+  assert(!offscreenMarker.hidden && offscreenMarker.inside && offscreenMarker.width >= 1,
+    'Mark the offscreen playhead position in the zoom bar: ' + JSON.stringify(offscreenMarker))
   await wheel(offscreenZoom.x, offscreenZoom.y, 120)
   await delay(200)
   const offscreenAfter = await exec(`(() => {
@@ -893,15 +949,17 @@ async function run() {
     return { x: grip.left + grip.width / 2, y: grip.top + grip.height / 2 }
   })()`)
   await mouse('mousePressed', gripTrack.x, gripTrack.y)
-  // 抓住把柄时白圈加粗，和普通悬停态区分。
-  assert(await exec(`(() => {
-    const grip = document.querySelector('#zoom-thumb .zoom-grip[data-edge=right]')
-    const ring = getComputedStyle(grip, '::after')
-    return grip.classList.contains('grabbing') && parseFloat(ring.top) >= 5 && parseFloat(ring.width) <= 3
-  })()`), 'Thicken the grabbed zoom handle ring')
+  // 抓住任意一侧时两侧把柄一起加粗，松手后恢复细描边。
+  const gripBorders = `(() => {
+    const width = edge => parseFloat(getComputedStyle(document.querySelector('#zoom-thumb .zoom-grip[data-edge=' + edge + ']')).borderTopWidth)
+    return { left: width('left'), right: width('right'), state: document.querySelector('#zoom-thumb').classList.contains('gripping') }
+  })()`
+  const grippingState = await exec(gripBorders)
+  assert(grippingState.state && grippingState.left >= 2 && grippingState.right >= 2, 'Thicken both zoom grips while dragging one: ' + JSON.stringify(grippingState))
   await mouse('mouseMoved', gripTrack.x - 40, gripTrack.y)
   await mouse('mouseReleased', gripTrack.x - 40, gripTrack.y)
-  assert(await exec(`!document.querySelector('#zoom-thumb .zoom-grip[data-edge=right]').classList.contains('grabbing')`), 'Clear the grabbed zoom handle state after release')
+  const gripReleased = await exec(gripBorders)
+  assert(!gripReleased.state && gripReleased.left < 2 && gripReleased.right < 2, 'Restore thin zoom grips after release: ' + JSON.stringify(gripReleased))
   const gripAfter = await exec(`(() => {
     const grip = document.querySelector('#zoom-thumb .zoom-grip[data-edge=right]').getBoundingClientRect()
     return grip.left + grip.width / 2
@@ -1008,10 +1066,10 @@ async function run() {
     text.value += '草稿'
     text.dispatchEvent(new Event('input', { bubbles: true }))
   })()`)
-  await click('split-track')
+  await menuCommand('.cue', '拆分双语…')
   await expect('!document.querySelector("#split-dialog").open && !document.querySelector("#cue-form .discard-draft").hidden && document.querySelector("#status").textContent.includes("先应用或取消")', 'protect pending text when splitting its track')
   await exec('document.querySelector("#cue-form .discard-draft").click()')
-  await click('split-track')
+  await menuCommand('.cue', '拆分双语…')
   await expect(`document.querySelector('#split-dialog').open && document.querySelector('#split-preview').textContent.includes('上轨 你好') &&
     document.querySelector('#split-preview').textContent.includes('00:00:16.000') && document.querySelector('#split-preview').textContent.includes('3 行正文')`, 'show the original language order and the reason for an exception')
   await exec(`(() => {
@@ -1025,7 +1083,7 @@ async function run() {
   await expect('!document.querySelector("#open-project").disabled && !document.querySelector("#split-dialog").open && document.querySelectorAll(".track-lane").length === 1 && document.querySelector(".cue").textContent.startsWith("你好")', 'cancel split without changing the active track')
   await exec('document.querySelector("video").currentTime = 2.1')
   await expect('!document.querySelector("video").seeking && document.querySelector("#timecode").value === "00:00:02.01" && document.querySelectorAll(".caption").length === 1', 'hold a frame inside the original bilingual cue')
-  await click('split-track')
+  await menuCommand('.cue', '拆分双语…')
   await exec(`(() => {
     const order = document.querySelector('#split-order')
     order.value = 'original'
@@ -1035,12 +1093,12 @@ async function run() {
   await expect('document.querySelectorAll(".track-lane").length === 2', 'split bilingual into two tracks')
   assert.deepEqual(await exec('Array.from(document.querySelectorAll(".caption")).map(node => node.textContent)'), ['你好', 'Hello'], 'update the paused preview after splitting')
   await expect('!document.querySelector("#next-review").hidden && document.querySelector("#next-review").textContent === "待校对 2"', 'list two exceptions after splitting')
-  await click('split-track')
+  await menuCommand('.cue', '拆分双语…')
   await expect(`document.querySelector('#split-dialog').open && document.querySelector('#split-dialog button[value=confirm]').disabled &&
     document.querySelector('#split-preview').textContent.includes('已有链接')`, 'prevent a split with no eligible pairs')
   await exec('document.querySelector("#split-dialog button[value=cancel]").click()')
   await expect('!document.querySelector("#open-project").disabled && !document.querySelector("#split-dialog").open && document.querySelectorAll(".track-lane").length === 2', 'keep the current tracks when no pair is eligible')
-  await click('link-tool')
+  await menuCommand('.cue', '链接字幕')
   await click('next-review')
   await expect(`document.querySelector('#cue-text').value === '单行' && document.querySelector('#timecode').value === '00:00:02.05' && document.querySelector('#select-tool').getAttribute('aria-pressed') === 'true'`, 'locate the retained single line without starting a link')
   await exec('document.querySelector("video").currentTime = 2.9')
@@ -1462,7 +1520,9 @@ async function run() {
     const rows = [...document.querySelectorAll('.style-list-item')]
     const defaults = rows.filter(row => row.title === 'Default')
     const notes = rows.filter(row => row.title === 'Notes')
-    return defaults.length === 1 && notes.length === 1 && !rows.some(row => row.querySelector('.style-list-source'))
+    const names = rows.map(row => row.title.trim().toLowerCase())
+    return defaults.length === 1 && notes.length === 1 && !rows.some(row => row.querySelector('.style-list-source')) &&
+      new Set(names).size === names.length
   })()`, 'overwrite same-name styles instead of listing duplicates')
   await exec(`(() => {
     [...document.querySelectorAll('.style-list-item')].find(row => row.title === 'Default').querySelector('[aria-label=编辑]').click()
@@ -1470,7 +1530,7 @@ async function run() {
     name.value = 'Notes'
     name.form.requestSubmit()
   })()`)
-  await expect('document.querySelector("#status").textContent.includes("已使用这个名称")', 'reject duplicate style names after merging')
+  await expect('document.querySelector("#status").textContent.includes("全工程唯一")', 'reject duplicate style names after merging')
   await exec(`(() => {
     const name = document.querySelector('#style-editor input[type=text]')
     const size = document.querySelector('#style-editor input[type=number]')
@@ -1610,6 +1670,14 @@ async function run() {
 
   await click('recent-projects')
   await expect('document.querySelector("#recent-dialog").open', 'list recent projects')
+  const recentRow = await exec(`(() => {
+    const row = document.querySelector('#recent-list button')
+    const style = getComputedStyle(row)
+    return { background: style.backgroundColor, height: row.getBoundingClientRect().height, time: row.querySelector('.recent-item-time')?.textContent ?? '' }
+  })()`)
+  assert.equal(recentRow.background, 'rgba(0, 0, 0, 0)', 'Keep recent rows flat instead of card-like')
+  assert(recentRow.height < 60, 'Keep recent rows compact: ' + JSON.stringify(recentRow))
+  assert(recentRow.time.length > 0, 'Show when the project was last opened: ' + JSON.stringify(recentRow))
   await exec('document.querySelector("#recent-list button").click()')
   await expect('document.querySelector("#project-change-dialog").open', 'ask before switching to a recent project')
   await exec('document.querySelector("#project-change-dialog button[value=discard]").click()')
@@ -1800,6 +1868,7 @@ async function run() {
   assert.equal(await exec('getComputedStyle(document.querySelector(".track-lane:last-child .cue")).opacity'), '0.3', 'Dim the subtitle blocks of a hidden track')
   const hiddenEdge = await startEdge()
   await expect(`document.querySelector(${JSON.stringify(topCue)}).dataset.range.includes('00:00:01.170') && document.querySelector('#snap-guide')?.hidden !== false`, 'ignore a hidden track while snapping an edge')
+  assert(await exec(`parseFloat(document.querySelector(${JSON.stringify(topCue)}).style.width) > 1`), 'Keep the dragged block at its real width instead of collapsing to 1px')
   await mouse('mouseReleased', hiddenEdge.x + hiddenEdge.delta, hiddenEdge.y)
   await click('undo')
   await toggleBottom()
@@ -1825,7 +1894,7 @@ async function run() {
   await click('undo')
   await toggleBottom()
   await click('snap-tool')
-  await click('link-tool')
+  await menuCommand('.cue', '链接字幕')
   await pressCue(topCue)
   await pressCue(extraCue)
   await expect('document.querySelector("#status").textContent === "请选择另一条轨道上的字幕"', 'reject a same-track pair')
@@ -1862,7 +1931,7 @@ async function run() {
   await assertPairTimes(topOriginal, bottomOriginal)
   await click('redo')
   await assertPairTimes(topShifted, bottomShifted)
-  await click('link-tool')
+  await menuCommand('.cue', '链接字幕')
   await pressCue(topCue)
   await expect('document.querySelector("#status").textContent === "已解除链接"', 'unlink the manual pair')
   await click('select-tool')
@@ -1870,16 +1939,7 @@ async function run() {
   await expect('document.querySelector("#status").textContent === "已移动字幕"', 'move only the selected cue after unlinking')
   await assertPairTimes('00:00:02.000 – 00:00:04.000', bottomShifted)
   assert.equal(await timesOf(extraCue), '00:00:04.000 – 00:00:04.800')
-  const menuCommand = async (target, label) => {
-    await exec(`(() => {
-      const node = document.querySelector(${JSON.stringify(target)})
-      const box = node.getBoundingClientRect()
-      node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: box.left + 12, clientY: box.top + 8, button: 2 }))
-    })()`)
-    await expect(`document.querySelector('#timeline-menu:popover-open')`, 'open the timeline context menu')
-    await exec(`Array.from(document.querySelectorAll('#timeline-menu button')).find(item => item.textContent === ${JSON.stringify(label)}).click()`)
-  }
-  await menuCommand(topCue, '复制字幕')
+  await menuCommand(topCue, '复制')
   await exec('document.querySelector(".track-heading:last-child .track-name").click()')
   await expect('document.querySelector(".track-heading:last-child").classList.contains("active") && document.querySelector(".track-lane:last-child").classList.contains("active")', 'highlight the selected track header and lane')
   const firstHeaderPoint = await exec(`(() => {
@@ -1949,9 +2009,9 @@ async function run() {
   await mouse('mouseMoved', marquee.endX, marquee.endY)
   await mouse('mouseReleased', marquee.endX, marquee.endY)
   await expect(`document.querySelectorAll('.cue.selected').length === ${marquee.expected} && ${marquee.expected} > 1`, 'select subtitle blocks by dragging in an empty timeline area')
-  await menuCommand('#ruler', '粘贴字幕到当前轨道')
+  await pressShortcut('v', 'KeyV', 86, process.platform === 'darwin' ? 4 : 2)
   await expect(`document.querySelector('.track-lane:last-child .cue.selected').dataset.range === '00:00:01.200 – 00:00:03.200'`, 'paste at the playhead into the selected track with the original duration')
-  await menuCommand('.cue.selected', '删除字幕')
+  await menuCommand('.cue.selected', '删除')
   await expect('document.querySelectorAll(".track-lane:last-child .cue").length === 1', 'delete a subtitle using its context menu')
   await click('undo')
   await expect('document.querySelectorAll(".track-lane:last-child .cue").length === 2', 'undo context-menu deletion')
@@ -1959,6 +2019,51 @@ async function run() {
   await exec('document.querySelector(".track-heading:first-child .track-name").click()')
   await menuCommand('#ruler', '选中当前轨道全部字幕块')
   await expect('document.querySelectorAll(".track-lane:first-child .cue.selected").length === 2', 'select every subtitle from the active track')
+  // 多选裁剪：拖动其中一条的左边，所有选中块按同一方向、同一时长调整。
+  const multiTrimPoint = await exec(`(() => {
+    const box = document.querySelector(${JSON.stringify(topCue)}).getBoundingClientRect()
+    return { x: Math.ceil(box.left) + 3, y: box.top + 8, delta: .2 * Number(document.querySelector('#zoom').value) }
+  })()`)
+  await mouse('mousePressed', multiTrimPoint.x, multiTrimPoint.y)
+  await mouse('mouseMoved', multiTrimPoint.x + multiTrimPoint.delta, multiTrimPoint.y)
+  await delay(200)
+  await mouse('mouseReleased', multiTrimPoint.x + multiTrimPoint.delta, multiTrimPoint.y)
+  await expect('document.querySelector("#status").textContent === "已调整 2 条字幕边界"', 'trim every selected cue together')
+  assert.equal(await timesOf(topCue), '00:00:02.200 – 00:00:04.000')
+  assert.equal(await timesOf(extraCue), '00:00:04.200 – 00:00:04.800')
+  await click('undo')
+  assert.equal(await timesOf(topCue), '00:00:02.000 – 00:00:04.000')
+  await menuCommand(topCue, '绑定')
+  await expect('document.querySelectorAll(".cue.bound").length === 2 && document.querySelectorAll(".cue-binding-dot").length === 2', 'mark bound cues with a dot')
+  // 直接拖动绑定块（不先点选）也要整组移动。
+  const boundEmpty = await exec(`(() => { const lane = document.querySelector('.track-lane:first-child'); const box = lane.getBoundingClientRect(); return { x: box.left + 6, y: box.top + 8 } })()`)
+  await mouse('mousePressed', boundEmpty.x, boundEmpty.y)
+  await mouse('mouseReleased', boundEmpty.x, boundEmpty.y)
+  await expect('document.querySelectorAll(".cue.selected").length === 0', 'deselect before dragging a bound cue directly')
+  const boundPoint = await exec(`(() => { const box = document.querySelector(${JSON.stringify(extraCue)}).getBoundingClientRect(); return { x: box.left + box.width / 2, y: box.top + box.height / 2, shift: Number(document.querySelector('#zoom').value) / 2 } })()`)
+  await mouse('mousePressed', boundPoint.x, boundPoint.y)
+  await mouse('mouseMoved', boundPoint.x + boundPoint.shift, boundPoint.y)
+  await mouse('mouseReleased', boundPoint.x + boundPoint.shift, boundPoint.y)
+  await expect('document.querySelector("#status").textContent === "已移动成组字幕"', 'move a bound group when dragging one block directly')
+  assert.equal(await timesOf(topCue), '00:00:02.500 – 00:00:04.500')
+  assert.equal(await timesOf(extraCue), '00:00:04.500 – 00:00:05.300')
+  await click('undo')
+  await exec(`document.querySelector(${JSON.stringify(extraCue)}).click()`)
+  await expect('document.querySelectorAll(".cue.selected").length === 2', 'select every cue bound to the clicked block')
+  await moveTopHalfSecond()
+  await expect('document.querySelector("#status").textContent === "已移动成组字幕"', 'move a bound group together')
+  assert.equal(await timesOf(topCue), '00:00:02.500 – 00:00:04.500')
+  assert.equal(await timesOf(extraCue), '00:00:04.500 – 00:00:05.300')
+  await click('undo')
+  await menuCommand(topCue, '解除绑定')
+  await expect('document.querySelectorAll(".cue.bound").length === 0', 'remove binding dots after unbinding')
+  await menuCommand(topCue, '清空')
+  await expect(`document.querySelector(${JSON.stringify(topCue)}).textContent === ''`, 'clear cue text from the context menu')
+  await click('undo')
+  await menuCommand(topCue, '设置样式')
+  await expect('document.querySelector("#cue-style-menu").matches(":popover-open") && document.querySelectorAll("#cue-style-menu button").length >= 1', 'list project styles from the context menu')
+  await exec('document.querySelector("#cue-style-menu button").click()')
+  await expect('document.querySelector("#status").textContent === "已设置字幕样式"', 'apply a style to the selected cues')
   await moveTopHalfSecond()
   await expect('document.querySelector("#status").textContent === "已移动成组字幕"', 'move the selected subtitles in a single group')
   assert.equal(await timesOf(topCue), '00:00:02.500 – 00:00:04.500')
@@ -2054,5 +2159,114 @@ async function run() {
   await expect('document.querySelector("#quit-dialog").open', 'prompt to save before quitting after the write settles')
   await exec('document.querySelector("#quit-cancel").click()')
   await expect('!document.querySelector("#quit-dialog").open && !document.querySelector("#save-project-as").disabled && document.title.includes("●")', 'retry quit after canceling Save As without discarding unsaved edits')
+  // 密集缩放下字幕块按真实时长绘制，块之间互不遮挡；播放头可以吸附到块边缘。
+  picks.unshift('dense.srt')
+  await choose('new-project', 'discard')
+  await click('import-subtitles')
+  await expect('document.querySelectorAll(".cue").length === 40', 'import a dense subtitle track')
+  await delay(200)
+  await exec(`(() => {
+    const zoom = document.querySelector('#zoom')
+    zoom.value = zoom.min
+    zoom.dispatchEvent(new Event('input'))
+    document.querySelector('#timeline-scroll').scrollLeft = 0
+  })()`)
+  await delay(300)
+  const denseLayout = await exec(`(() => {
+    const blocks = [...document.querySelectorAll('.cue')].map(block => {
+      const box = block.getBoundingClientRect()
+      return { left: box.left, right: box.right, dense: block.classList.contains('dense'), width: box.width }
+    }).sort((left, right) => left.left - right.left)
+    let overlaps = 0
+    for (let index = 0; index < blocks.length - 1; index++) {
+      if (blocks[index + 1].left < blocks[index].right - .5) overlaps++
+    }
+    return { count: blocks.length, dense: blocks.filter(block => block.dense).length, overlaps, maxWidth: Math.max(...blocks.map(block => block.width)) }
+  })()`)
+  assert(denseLayout.count === 40 && denseLayout.dense === 40 && denseLayout.overlaps === 0 && denseLayout.maxWidth < 20,
+    'Draw dense cues at their true width without covering the next block: ' + JSON.stringify(denseLayout))
+  if (await exec('document.querySelector("#snap-tool").getAttribute("aria-pressed") === "false"')) await click('snap-tool')
+  const denseEdge = await exec(`(() => {
+    const ruler = document.querySelector('#ruler').getBoundingClientRect()
+    const scale = Number(document.querySelector('#zoom').value)
+    return { x: ruler.left + scale + 5, y: ruler.top + 8 }
+  })()`)
+  await mouse('mousePressed', denseEdge.x, denseEdge.y)
+  await delay(150)
+  const denseSnap = await exec(`(() => ({
+    time: document.querySelector('#timecode').value,
+    guide: !document.querySelector('#snap-guide').hidden,
+  }))()`)
+  await mouse('mouseReleased', denseEdge.x, denseEdge.y)
+  assert.equal(denseSnap.time, '00:00:01.00', 'Snap the playhead to a dense cue edge: ' + JSON.stringify(denseSnap))
+  assert(denseSnap.guide, 'Show the snap guide while the playhead is magnetised')
+  await expect('document.querySelector("#snap-guide").hidden', 'Clear the snap guide after releasing the playhead')
+  // 长工程：拖动缩放把柄必须能到达和滚轮相同的最小 / 最大倍率。
+  picks.unshift('long.srt')
+  await choose('new-project', 'discard')
+  await click('import-subtitles')
+  await expect('document.querySelectorAll(".cue").length === 1', 'import a long subtitle timeline')
+  await delay(200)
+  await exec(`(() => {
+    const zoom = document.querySelector('#zoom')
+    zoom.value = zoom.min
+    zoom.dispatchEvent(new Event('input'))
+    document.querySelector('#timeline-scroll').scrollLeft = 0
+  })()`)
+  await delay(300)
+  const longFit = await exec(`(() => {
+    const ruler = document.querySelector('#ruler').getBoundingClientRect()
+    const scroll = document.querySelector('#timeline-scroll')
+    const usable = scroll.clientWidth - document.querySelector('#track-headings').offsetWidth
+    return { x: ruler.left + usable / 2, y: ruler.top + 8 }
+  })()`)
+  await mouse('mousePressed', longFit.x, longFit.y)
+  await mouse('mouseReleased', longFit.x, longFit.y)
+  await delay(300)
+  await exec(`(() => {
+    const zoom = document.querySelector('#zoom')
+    zoom.value = zoom.min
+    zoom.dispatchEvent(new Event('input'))
+    document.querySelector('#timeline-scroll').scrollLeft = 0
+  })()`)
+  await delay(300)
+  const gripGeometry = await exec(`(() => {
+    const grip = document.querySelector('#zoom-thumb .zoom-grip[data-edge=right]').getBoundingClientRect()
+    const bar = document.querySelector('#timeline-zoom').getBoundingClientRect()
+    return { x: grip.left + grip.width / 2, y: grip.top + grip.height / 2, left: bar.left - 30, right: bar.right + 30 }
+  })()`)
+  await mouse('mousePressed', gripGeometry.x, gripGeometry.y)
+  const gripping = await exec(`(() => {
+    const width = edge => parseFloat(getComputedStyle(document.querySelector('#zoom-thumb .zoom-grip[data-edge=' + edge + ']')).borderTopWidth)
+    return { left: width('left'), right: width('right'), state: document.querySelector('#zoom-thumb').classList.contains('gripping') }
+  })()`)
+  assert(gripping.state && gripping.left >= 2 && gripping.right >= 2, 'Thicken both zoom grips while dragging one: ' + JSON.stringify(gripping))
+  for (let step = 1; step <= 8; step++) {
+    await mouse('mouseMoved', gripGeometry.x + (gripGeometry.left - gripGeometry.x) * step / 8, gripGeometry.y)
+    await delay(50)
+  }
+  await mouse('mouseReleased', gripGeometry.left, gripGeometry.y)
+  await delay(300)
+  const gripMax = await exec('(() => ({ value: +document.querySelector("#zoom").value, max: +document.querySelector("#zoom").max }))()')
+  assert(gripMax.value >= gripMax.max - 1, 'Reach the wheel maximum zoom by dragging the grip: ' + JSON.stringify(gripMax))
+  const released = await exec(`(() => {
+    const width = edge => parseFloat(getComputedStyle(document.querySelector('#zoom-thumb .zoom-grip[data-edge=' + edge + ']')).borderTopWidth)
+    return { left: width('left'), right: width('right'), state: document.querySelector('#zoom-thumb').classList.contains('gripping') }
+  })()`)
+  assert(!released.state && released.left < 2 && released.right < 2, 'Restore thin zoom grips after release: ' + JSON.stringify(released))
+  const gripOut = await exec(`(() => {
+    const grip = document.querySelector('#zoom-thumb .zoom-grip[data-edge=right]').getBoundingClientRect()
+    const bar = document.querySelector('#timeline-zoom').getBoundingClientRect()
+    return { x: grip.left + grip.width / 2, y: grip.top + grip.height / 2, target: bar.right + 30 }
+  })()`)
+  await mouse('mousePressed', gripOut.x, gripOut.y)
+  for (let step = 1; step <= 8; step++) {
+    await mouse('mouseMoved', gripOut.x + (gripOut.target - gripOut.x) * step / 8, gripOut.y)
+    await delay(50)
+  }
+  await mouse('mouseReleased', gripOut.target, gripOut.y)
+  await delay(300)
+  const gripMin = await exec('(() => ({ value: +document.querySelector("#zoom").value, min: +document.querySelector("#zoom").min }))()')
+  assert(gripMin.value <= gripMin.min + .5, 'Return to the wheel minimum zoom by dragging the grip: ' + JSON.stringify(gripMin))
   window.off('closed', unexpectedClose)
 }

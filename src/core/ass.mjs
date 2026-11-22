@@ -404,10 +404,10 @@ export function pasteCue(destination, clipboard, start, styles) {
     const fields = completeStyle(source.fields)
     const equalAppearance = style => Object.entries(completeStyle(style.fields))
       .every(([key, value]) => key === 'Name' || fields[key] === value)
+    // 一个工程等于一个 ASS 文件：样式名全工程唯一，同名样式直接复用（必要时改成全局样式）。
     const matchingName = candidate => {
       const lower = candidate.toLowerCase()
-      return styles.find(style => style.trackId === destination.id && nameOf(style).toLowerCase() === lower) ??
-        styles.find(style => style.trackId === undefined && nameOf(style).toLowerCase() === lower)
+      return styles.find(style => nameOf(style).toLowerCase() === lower)
     }
     let result = matchingName(name)
     if (!result || !equalAppearance(result)) {
@@ -431,6 +431,12 @@ export function pasteCue(destination, clipboard, start, styles) {
         used.add(unique.toLowerCase())
         styles.push(result)
       }
+    }
+    if (result.trackId !== undefined) {
+      result.trackId = undefined
+      delete result.line
+      delete result.prefix
+      delete result.columns
     }
     names.set(source.id, result)
     return result

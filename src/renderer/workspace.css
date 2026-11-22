@@ -139,14 +139,17 @@ video, #preview-canvas { position: absolute; inset: 0; width: 100%; height: 100%
 .tabs { padding: 0 4px; gap: 0; background: #202020; }
 .tabs-scroll { display: flex; flex: 1; min-width: 0; gap: 2px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .tabs-scroll::-webkit-scrollbar { display: none; }
-.tabs-scroll button { align-self: stretch; flex-shrink: 0; border: 0; border-radius: 0; border-bottom: 2px solid transparent; background: transparent; padding: 0 7px; color: var(--muted); }
-.tabs-scroll button[aria-selected=true] { border-bottom-color: var(--accent); color: #eee; font-weight: 650; }
+.tabs-scroll button { align-self: stretch; flex-shrink: 0; border: 0; border-radius: 0; background: transparent; padding: 0 7px; color: var(--muted); }
+.tabs-scroll button[aria-selected=true] { color: #eee; font-weight: 650; }
+.tabs-scroll button:hover:not(:disabled), .tabs-scroll button:hover:not([aria-selected=true]) { background: transparent; color: #f2f4f7; }
 /* 标签放不下时出现的翻页箭头。 */
-.tabs-page { flex-shrink: 0; display: grid; place-items: center; width: 22px; height: 24px; padding: 0; margin: 0 1px; background: transparent; border: 0; border-radius: var(--radius-chip); color: #9fa9b5; }
-.tabs-page:hover:not(:disabled) { background: #343434; color: #e6e8ea; }
-.tabs-page::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; }
-.tabs-page.prev::before { transform: rotate(135deg); margin-left: 2px; }
-.tabs-page.next::before { transform: rotate(-45deg); margin-right: 2px; }
+.tabs-more { flex-shrink: 0; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; margin: 0 1px; background: transparent; border: 0; border-radius: var(--radius-chip); color: #9fa9b5; font-size: 15px; line-height: 1; letter-spacing: 1px; }
+.tabs-more:hover:not(:disabled) { background: transparent; color: #f2f4f7; }
+#tabs-menu, #cue-style-menu { position: fixed; inset: auto; margin: 0; min-width: 132px; max-height: 50vh; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; color: inherit; }
+#tabs-menu:not(:popover-open), #cue-style-menu:not(:popover-open) { display: none; }
+.tabs-menu button { display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 5px 9px; border: 0; border-radius: var(--radius-chip); background: transparent; color: #dfe3e8; text-align: left; }
+.tabs-menu button:hover:not(:disabled) { background: #33383f; }
+.tabs-menu button[aria-selected=true] { color: #fff; font-weight: 650; }
 .inspector-body { overflow: auto; padding: 12px; overscroll-behavior: contain; }
 .inspector-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; font-weight: 600; }
 .muted { color: var(--muted); }
@@ -216,18 +219,16 @@ input[type=range] { margin: 0; accent-color: var(--accent); }
 .timeline-zoom { position: relative; flex: 1; height: 12px; margin: 0 9px 4px; border-radius: var(--radius-control); touch-action: none; }
 .timeline-zoom::after { content: ""; position: absolute; left: 0; right: 0; bottom: -6px; height: 1px; background: var(--accent); }
 .zoom-track { position: absolute; inset: 0; border-radius: var(--radius-control); background: #242424; box-shadow: inset 0 0 0 1px #2e2e2e; }
-.zoom-thumb { position: absolute; top: 2px; bottom: 2px; left: 0; width: 100%; border-radius: var(--radius-chip); background: #55585d; cursor: grab; }
+.zoom-thumb { position: absolute; top: 0; bottom: 0; left: 0; width: 100%; border-radius: var(--radius-chip); background: #55585d; cursor: grab; }
 .timeline-zoom:hover .zoom-thumb { background: #61656b; }
 .zoom-thumb.dragging { background: #6c7077; cursor: grabbing; }
-.zoom-grip { position: absolute; top: 50%; width: 14px; height: 14px; transform: translate(-50%, -50%); border-radius: 50%; border: 0; background: #f2f4f7; box-shadow: 0 1px 3px #000a; cursor: ew-resize; }
-.zoom-grip::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: #2a2b2e; }
+.zoom-playhead { position: absolute; top: -1px; bottom: -1px; width: 2px; margin-left: -1px; border-radius: 1px; background: #ff3b30; box-shadow: 0 0 0 1px #0009; pointer-events: none; z-index: 2; }
+.zoom-grip { position: absolute; top: 50%; width: 12px; height: 12px; transform: translate(-50%, -50%); border-radius: 50%; border: 1.5px solid #dfe3e8; background: #2a2b2e; box-shadow: 0 1px 3px #000a; cursor: ew-resize; transition: border-color .12s ease, background .12s ease; }
 .zoom-grip[data-edge=left] { left: 0; }
 .zoom-grip[data-edge=right] { left: 100%; }
-.zoom-grip { transition: background .12s ease, box-shadow .12s ease, transform .12s ease; }
-.zoom-grip:hover, .zoom-thumb.dragging .zoom-grip { background: #fff; }
-/* 被抓住时：白圈加粗、整体略微放大，和悬停态区分开。 */
-.zoom-grip.grabbing { background: #fff; transform: translate(-50%, -50%) scale(1.15); box-shadow: 0 1px 5px #000d; }
-.zoom-grip.grabbing::after { inset: 6px; }
+.zoom-grip:hover { border-color: #fff; background: #35383d; }
+/* 抓住任意一侧把柄时，两侧都换成稍粗的描边，提示正在缩放。 */
+.zoom-thumb.gripping .zoom-grip { border-width: 2.5px; border-color: #fff; }
 .zoom-source { display: none; }
 .timeline-content { display: flex; min-height: 100%; width: max-content; min-width: 100%; }
 .track-headings { width: var(--heading-width); position: sticky; left: 0; z-index: 3; background: #1c1c1c; flex-shrink: 0; border-right: 1px solid var(--line); }
@@ -267,6 +268,12 @@ input[type=range] { margin: 0; accent-color: var(--accent); }
 .cue::after { right: 2px; }
 .cue:hover::before, .cue:hover::after { opacity: 1; }
 .cue.trim-edge { cursor: ew-resize; }
+.cue-binding-dot { position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%; background: #f4a447; pointer-events: none; }
+.cue.playing .cue-binding-dot { background: #ffc46b; }
+.cue.selected .cue-binding-dot { background: #ff3b30; }
+/* 缩得很小时按真实时长画窄块：去掉内边距和边框，块间留 1px 缝隙，右侧不再被下一块盖住。 */
+.cue.dense { padding-inline: 0; border-color: transparent; }
+.cue.dense::before, .cue.dense::after { display: none; }
 
 .cue:focus-visible { outline: none; }
 .cue.selected { border-color: #ff3b30; box-shadow: inset 0 0 0 1px #ff3b30; z-index: 1; }
@@ -333,7 +340,9 @@ dialog h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; letter-spaci
 dialog .dialog-actions { justify-content: center; }
 dialog .dialog-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 dialog .dialog-actions button.primary:hover:not(:disabled) { background: var(--accent-hover); }
-#split-preview, #recent-list { max-height: 250px; overflow: auto; }
+#split-preview { max-height: 250px; overflow: auto; }
+#recent-dialog { width: 440px; }
+#recent-list { max-height: 330px; overflow: auto; margin: 0 -4px; }
 #srt-import-summary { overflow-wrap: anywhere; }
 #srt-import-issues { max-height: 240px; overflow: auto; padding-left: 22px; }
 #srt-import-issues li + li { margin-top: 4px; }
@@ -342,7 +351,9 @@ dialog .dialog-actions button.primary:hover:not(:disabled) { background: var(--a
 .split-entry p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .split-time { color: var(--muted); font-variant-numeric: tabular-nums; }
 .split-exception { border-left: 2px solid #d6a963; }
-#recent-list button { display: block; width: 100%; margin-bottom: 4px; text-align: left; }
+#recent-list button.recent-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; margin: 0; padding: 7px 6px; text-align: left; background: transparent; border: 0; border-bottom: 1px solid #2c2c2c; border-radius: 0; }
+#recent-list button.recent-item:last-child { border-bottom: 0; }
+#recent-list button.recent-item:hover:not(:disabled), #recent-list button.recent-item:focus-visible { background: #2a2a2a; outline: none; }
 
 .ass-layer { width: 100%; height: 100%; }
 
@@ -563,7 +574,7 @@ input[type=number] { appearance: textfield; }
 .script-line:hover { background: #242424; }
 .script-line.current:hover { background: #1b3a5e; }
 .timeline-scroll { overscroll-behavior: contain; }
-.tabs-scroll button:hover:not([aria-selected=true]) { color: #dfe3e8; }
+.tabs-scroll button:hover:not([aria-selected=true]) { background: transparent; color: #f2f4f7; }
 .menu-popup button:active:not(:disabled), .picker-list button:active:not(:disabled) { background: #464646; filter: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
@@ -602,9 +613,10 @@ input[type=radio]:checked { border-color: var(--accent); }
 input[type=radio]:checked::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #fff; }
 
 
-#recent-list button.recent-item { display: grid; gap: 2px; width: 100%; margin-bottom: 4px; padding: 8px 10px; text-align: left; }
+.recent-item-text { display: grid; gap: 1px; min-width: 0; }
 .recent-item-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent-item-path { color: var(--muted); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-item-time { color: var(--muted); font-size: var(--text-xs); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 
 /* ---- 同轨字幕重叠：轨道内斜纹高亮 + 刻度尺上的感叹号提示 ---- */

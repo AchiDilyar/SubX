@@ -85,23 +85,6 @@
         <div class="menu-popup" id="menu-edit-popup" role="menu" aria-labelledby="menu-edit" hidden>
           <button type="button" role="menuitem" id="menu-undo"><svg class="icon" aria-hidden="true"><use href="#i-undo"></use></svg><span>撤销</span><kbd>⌘Z</kbd></button>
           <button type="button" role="menuitem" id="menu-redo"><svg class="icon" aria-hidden="true"><use href="#i-redo"></use></svg><span>重做</span><kbd>⇧⌘Z</kbd></button>
-          <button type="button" role="menuitem" id="menu-delete-cue"><svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg><span>删除字幕</span><kbd>Delete</kbd></button>
-          <hr>
-          <button type="button" role="menuitem" id="menu-add-cue"><svg class="icon" aria-hidden="true"><use href="#i-cue"></use></svg><span>添加字幕</span></button>
-          <button type="button" role="menuitem" id="menu-add-track"><svg class="icon" aria-hidden="true"><use href="#i-track"></use></svg><span>添加轨道</span></button>
-          <button type="button" role="menuitem" id="menu-delete-track"><svg class="icon" aria-hidden="true"><use href="#i-remove-track"></use></svg><span>删除轨道</span></button>
-          <button type="button" role="menuitem" id="split-track"><svg class="icon" aria-hidden="true"><use href="#i-split"></use></svg><span>拆分双语…</span></button>
-          <button type="button" role="menuitem" id="link-tool" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg><span>链接字幕</span></button>
-          <hr>
-          <button type="button" role="menuitem" id="menu-next-review"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg><span>定位下一条待校对</span></button>
-          <button type="button" role="menuitem" id="menu-complete-review"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg><span>标为已校对</span></button>
-          <hr>
-          <button type="button" role="menuitem" id="menu-styles-tab"><svg class="icon" aria-hidden="true"><use href="#i-style"></use></svg><span>样式管理</span></button>
-          <button type="button" role="menuitem" id="menu-settings-tab"><svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg><span>项目设置</span></button>
-          <button type="button" role="menuitem" id="menu-play"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg><span>播放 / 暂停</span><kbd>Space</kbd></button>
-          <button type="button" role="menuitemradio" aria-checked="true" id="menu-quality-1"><svg class="icon" aria-hidden="true"><use href="#i-monitor"></use></svg><span>完整预览</span><span class="menu-check" aria-hidden="true">✓</span></button>
-          <button type="button" role="menuitemradio" aria-checked="false" id="menu-quality-2"><svg class="icon" aria-hidden="true"><use href="#i-monitor"></use></svg><span>1/2 预览</span><span class="menu-check" aria-hidden="true">✓</span></button>
-          <button type="button" role="menuitemradio" aria-checked="false" id="menu-quality-4"><svg class="icon" aria-hidden="true"><use href="#i-monitor"></use></svg><span>1/4 预览</span><span class="menu-check" aria-hidden="true">✓</span></button>
         </div>
       </div>
       <div class="menu">
@@ -157,14 +140,14 @@
       <div id="vertical-divider" class="divider vertical" role="separator" tabindex="0" aria-label="调整配置区宽度" aria-orientation="vertical"><span class="divider-handle" aria-hidden="true"></span></div>
       <aside class="inspector">
         <header class="tabs">
-          <button class="tabs-page prev" id="tabs-prev" type="button" aria-label="上一页标签" hidden></button>
+          <button class="tabs-more" id="tabs-more-left" type="button" aria-label="显示前面的标签" hidden>…</button>
           <div class="tabs-scroll" id="tabs-scroll" role="tablist" aria-label="配置区标签">
             <button id="styles-tab" role="tab" aria-selected="true" aria-controls="styles-panel"><svg class="icon" aria-hidden="true"><use href="#i-style"></use></svg>样式管理</button>
             <button id="settings-tab" role="tab" aria-selected="false" aria-controls="settings-panel"><svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg>项目设置</button>
             <button id="cue-tab" role="tab" aria-selected="false" aria-controls="cue-panel" hidden><svg class="icon" aria-hidden="true"><use href="#i-cue"></use></svg>字幕编辑</button>
             <button id="script-tab" role="tab" aria-selected="false" aria-controls="script-panel"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg>待打轴</button>
           </div>
-          <button class="tabs-page next" id="tabs-next" type="button" aria-label="下一页标签" hidden></button>
+          <button class="tabs-more" id="tabs-more-right" type="button" aria-label="显示后面的标签" hidden>…</button>
         </header>
         <section id="styles-panel" class="inspector-body" role="tabpanel" aria-labelledby="styles-tab">
           <div id="style-list-header" class="inspector-heading">项目样式 <button id="add-style" title="新建样式" aria-label="新建样式"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></button></div>
@@ -232,7 +215,7 @@
     <section class="timeline" aria-label="多轨时间轴">
       <header class="timeline-controls">
         <div class="timeline-actions" aria-label="时间轴即时操作">
-          <button id="add-cue" title="添加字幕" aria-label="添加字幕"><svg class="icon" aria-hidden="true"><use href="#i-cue"></use></svg></button>
+          <button id="add-cue" title="添加字幕块" aria-label="添加字幕块"><svg class="icon" aria-hidden="true"><use href="#i-cue"></use></svg></button>
           <button id="undo" title="撤销" aria-label="撤销"><svg class="icon" aria-hidden="true"><use href="#i-undo"></use></svg></button>
           <button id="redo" title="重做" aria-label="重做"><svg class="icon" aria-hidden="true"><use href="#i-redo"></use></svg></button>
           <button id="split-cue" title="分割字幕" aria-label="分割字幕"><svg class="icon" aria-hidden="true"><use href="#i-blade"></use></svg></button>
@@ -267,7 +250,7 @@
               <div id="selection-box" class="selection-box" aria-hidden="true" hidden></div>
             </div>
           </div>
-          <p id="empty-timeline" class="empty-timeline">添加字幕，或导入 SRT / ASS。</p>
+          <p id="empty-timeline" class="empty-timeline">添加字幕块，或导入 SRT / ASS。</p>
         </div>
       </div>
       <div class="timeline-footer">
@@ -277,6 +260,7 @@
             <span class="zoom-grip" data-edge="left" aria-hidden="true"></span>
             <span class="zoom-grip" data-edge="right" aria-hidden="true"></span>
           </div>
+          <span id="zoom-playhead" class="zoom-playhead" aria-hidden="true" hidden></span>
         </div>
         <!-- 底部滚动条驱动缩放；保留 range 作为状态源与自动化回归入口 -->
         <input id="zoom" class="zoom-source" type="range" min="0" max="320" step="any" value="94" aria-label="时间轴缩放">
@@ -285,6 +269,8 @@
   </main>
   <footer><span id="status" role="status">就绪</span><span id="project-stats">0 条轨道 · 0 条字幕</span></footer>
   <div id="timeline-menu" class="menu-popup" role="menu" aria-label="时间轴操作" popover="auto"></div>
+  <div id="tabs-menu" class="menu-popup tabs-menu" role="menu" aria-label="其他标签" popover="auto"></div>
+  <div id="cue-style-menu" class="menu-popup tabs-menu" role="menu" aria-label="设置样式" popover="auto"></div>
   <div id="cue-editor-popover" class="cue-editor-popover" role="dialog" aria-label="编辑字幕正文" hidden>
     <textarea id="editor-text" rows="2" placeholder="输入字幕正文…" aria-label="字幕正文"></textarea>
     <p id="editor-error" class="cue-editor-error" hidden></p>
