@@ -1776,19 +1776,7 @@ function showTabsMenu(side) {
   place()
   requestAnimationFrame(place)
   tabsMenu.querySelector('button')?.focus({ preventScroll: true })
-  window.__tabMenuDebug = () => {
-    const style = getComputedStyle(tabsMenu)
-    return {
-      left: tabsMenu.style.left,
-      top: tabsMenu.style.top,
-      position: style.position,
-      computedLeft: style.left,
-      computedTop: style.top,
-      translate: tabsMenu.style.translate,
-      computedTranslate: style.translate,
-      rect: tabsMenu.getBoundingClientRect().toJSON(),
-    }
-  }
+
 }
 function revealTab(name) {
   const button = $(name + '-tab')
