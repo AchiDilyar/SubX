@@ -3743,10 +3743,19 @@ action('import-subtitles', () => withProjectOperation(async () => {
     selectedCues.clear()
     ensureSelection()
   })
-  status('已导入 ' + cues.length + ' 条字幕' + (issues.length ? ` · 跳过 ${issues.length} 条` : ''))
+  const encodingNote = file.encoding && file.encoding !== 'utf-8' ? ' · ' + file.encoding : ''
+  status('已导入 ' + cues.length + ' 条字幕' + encodingNote + (issues.length ? ` · 跳过 ${issues.length} 条` : ''))
 }))
 let exportSelection
 let exportPartner
+function exportOptions() {
+  return { encoding: $('export-encoding').value, newline: $('export-newline').value }
+}
+function exportOptionNote() {
+  const { encoding, newline } = exportOptions()
+  const label = { 'utf-8': 'UTF-8', 'utf-8-bom': 'UTF-8 BOM', 'utf-16le': 'UTF-16LE', gb18030: 'GB18030' }[encoding] ?? encoding
+  return encoding === 'utf-8' && newline === 'lf' ? '' : ' · ' + label + ' / ' + newline.toUpperCase()
+}
 function updateExportMergePreview() {
   const preview = $('export-merge-preview')
   if (!$('export-merge').checked || !exportPartner || !exportSelection) {
@@ -3787,6 +3796,8 @@ action('export-subtitles', () => {
     $('export-merge-summary').textContent = '检测到与 ' + trackLabel(partnerInfo.partner) + ' 的 ' + partnerInfo.count + ' 对链接字幕'
   }
   dialog.returnValue = 'cancel'
+  $('export-encoding').value = 'utf-8'
+  $('export-newline').value = 'lf'
   $('ass-export-note').hidden = !current.ass
   for (const value of ['srt', 'vtt']) dialog.querySelector('button[value="' + value + '"]').disabled = !current.cues.length
   dialog.showModal()
@@ -3804,21 +3815,21 @@ async function exportTrack(current, format) {
   const text = format === 'ass'
     ? writeAss(current, project.styles, fadeOf(project.settings), layer)
     : format === 'vtt' ? writeVtt(cues) : writeSrt(cues)
-  if (await app.exportSubtitles({ name: trackLabel(current), format, text })) {
-    status('已导出 ' + format.toUpperCase() + summary)
+  if (await app.exportSubtitles({ name: trackLabel(current), format, text, ...exportOptions() })) {
+    status('已导出 ' + format.toUpperCase() + summary + exportOptionNote())
   }
 }
 async function exportMergedTrack(current, partner, format) {
   const merged = mergedExportText(project, current, partner, format, { fade: fadeOf(project.settings) })
   const name = trackLabel(merged.upper) + ' + ' + trackLabel(merged.lower) + ' 合并'
-  if (!await app.exportSubtitles({ name, format, text: merged.text })) return
+  if (!await app.exportSubtitles({ name, format, text: merged.text, ...exportOptions() })) return
   const extras = [
     merged.pairs + ' 对链接',
     merged.singles ? merged.singles + ' 条单边' : '',
     merged.emptyOverlap ? merged.emptyOverlap + ' 对无重叠按上轨时间' : '',
     merged.skipped ? '跳过 ' + merged.skipped + ' 条空正文' : '',
   ].filter(Boolean).join(' · ')
-  status('已导出 ' + format.toUpperCase() + ' · ' + extras)
+  status('已导出 ' + format.toUpperCase() + ' · ' + extras + exportOptionNote())
 }
 $('export-format').addEventListener('close', async () => {
   const format = $('export-format').returnValue

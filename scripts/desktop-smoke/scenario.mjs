@@ -67,6 +67,11 @@ async function run() {
     window.setIgnoreMouseEvents(true)
     window.setFocusable(false)
     window.showInactive()
+  } else if (process.env.SUBX_SMOKE_SHOW_WINDOW) {
+    // 隐藏窗口在部分 macOS 会话里会丢失 hover 状态；本地可用该开关做稳定回归。
+    app.focus({ steal: true })
+    window.show()
+    window.focus()
   } else {
     window.hide()
   }
@@ -156,7 +161,7 @@ async function run() {
   assert(narrowInspector.overflow <= 1 && narrowInspector.bodyOverflow <= 1 && narrowInspector.rowOverflow <= 1,
     'Keep the inspector and style rows inside a 255px panel: ' + JSON.stringify(narrowInspector))
   await exec(`document.querySelector('.upper').style.removeProperty('--inspector-width')`)
-  await delay(120)
+  await delay(350)
   const tabStyles = await exec(`(() => {
     const active = getComputedStyle(document.querySelector('#styles-tab'))
     const inactive = getComputedStyle(document.querySelector('#settings-tab'))
@@ -164,9 +169,13 @@ async function run() {
   })()`)
   assert.equal(tabStyles.underline, '0px', 'Remove the active tab underline')
   const tabPoint = await exec(`(() => { const box = document.querySelector('#settings-tab').getBoundingClientRect(); return { x: box.left + box.width / 2, y: box.top + box.height / 2 } })()`)
-  await mouse('mouseMoved', tabPoint.x, tabPoint.y)
-  await delay(150)
-  const tabHover = await exec(`(() => { const style = getComputedStyle(document.querySelector('#settings-tab')); return { background: style.backgroundColor, color: style.color } })()`)
+  let tabHover
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await mouse('mouseMoved', tabPoint.x, tabPoint.y)
+    await delay(250)
+    tabHover = await exec(`(() => { const style = getComputedStyle(document.querySelector('#settings-tab')); return { background: style.backgroundColor, color: style.color } })()`)
+    if (tabHover.color !== tabStyles.inactiveColor) break
+  }
   assert.equal(tabHover.background, 'rgba(0, 0, 0, 0)', 'Keep tab hover free of a background block')
   assert.notEqual(tabHover.color, tabStyles.inactiveColor,
     'Brighten the hovered tab text: ' + JSON.stringify({ ...tabHover, point: tabPoint, hovered: await exec('document.querySelector("#settings-tab").matches(":hover")') }))
@@ -277,8 +286,13 @@ async function run() {
     button.querySelector('svg') && !button.textContent.trim() &&
     !button.title && !button.dataset.tooltip && !button.getAttribute('aria-label')).map(button => button.id || button.className)`)
   assert.deepEqual(missingTooltips, [], 'Give every icon-only button a tooltip label')
+  await delay(200)
   const addTrackBox = await exec(`(() => { const r = document.querySelector('#add-track').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`)
-  await mouse('mouseMoved', addTrackBox.x, addTrackBox.y)
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await mouse('mouseMoved', addTrackBox.x, addTrackBox.y)
+    await delay(250)
+    if (await exec('!document.querySelector(".icon-tooltip").hidden')) break
+  }
   await expect('!document.querySelector(".icon-tooltip").hidden && document.querySelector(".icon-tooltip").textContent === "添加轨道"', 'show the add-track tooltip on hover')
   const deleteTrackBox = await exec(`(() => { const r = document.querySelector('#delete-track').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`)
   await mouse('mouseMoved', deleteTrackBox.x, deleteTrackBox.y)
@@ -1153,6 +1167,17 @@ async function run() {
   await expect('document.querySelector(".cue")?.textContent === "VTT 字幕"', 'import a WebVTT file')
   await click('undo')
   await expect('document.querySelectorAll(".track-lane").length === 2', 'undo the WebVTT import in one step')
+  const gbkBytes = Buffer.concat([
+    Buffer.from('1\r\n00:00:01,000 --> 00:00:02,000\r\n'),
+    Buffer.from([0xc4, 0xe3, 0xba, 0xc3]),
+    Buffer.from('\r\n'),
+  ])
+  await writeFile(join(directory, 'gbk.srt'), gbkBytes)
+  picks.unshift('gbk.srt')
+  await click('import-subtitles')
+  await expect('document.querySelector(".cue")?.textContent === "你好" && document.querySelector("#status").textContent.includes("gb18030")', 'import a GB18030 SRT')
+  await click('undo')
+  await expect('document.querySelectorAll(".track-lane").length === 2', 'undo the GB18030 import in one step')
   const inputSrt = join(directory, 'input.srt')
   await writeFile(inputSrt, Buffer.from('\ufeff' + await readFile(inputSrt, 'utf8'), 'utf16le'))
   await click('import-subtitles')
@@ -1407,6 +1432,14 @@ async function run() {
   await chooseExport('vtt')
   await expect('document.querySelector("#status").textContent === "已导出 VTT"', 'export WebVTT from the same track')
   assert.match(await readFile(join(directory, 'track.vtt'), 'utf8'), /^WEBVTT\n\n/)
+  saves.unshift('track-gbk.srt')
+  await click('export-subtitles')
+  await exec('(() => { document.querySelector("#export-encoding").value = "gb18030"; document.querySelector("#export-newline").value = "crlf" })()')
+  await exec('document.querySelector("#export-format button[value=srt]").click()')
+  await expect('document.querySelector("#status").textContent.includes("GB18030 / CRLF")', 'export GB18030 with CRLF')
+  const gbkSrt = await readFile(join(directory, 'track-gbk.srt'))
+  assert(gbkSrt.includes(Buffer.from([0xc4, 0xe3])), 'write Chinese text as GB18030')
+  assert(gbkSrt.includes(0x0d) && gbkSrt.includes(0x0a), 'write CRLF line endings')
   await click('open-project')
   await expect('document.querySelector("#status").textContent === "已打开工程"', 'reopen saved project')
   await editTopCue('你好，重新打开')

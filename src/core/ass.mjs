@@ -82,7 +82,7 @@ export function readAss(source) {
     }
     const row = line.match(/^(\s*(Dialogue|Style):\s*)(.*)$/i)
     const kind = row?.[2].toLowerCase()
-    if (kind === 'style' && section === 'v4+ styles') {
+    if (kind === 'style' && (section === 'v4+ styles' || section === 'v4 styles')) {
       const columns = formats.get(section) ?? styleFields
       const fields = parseRow(row[3], columns)
       if (!fields || !field(fields, 'Name')?.trim()) {

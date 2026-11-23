@@ -6,6 +6,7 @@ import { basename, dirname, extname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { decodeSubtitleText, encodeSubtitleText } from '../core/encoding.mjs'
 import { normalizeStyleNames, validateProject } from '../core/project.mjs'
 import { bundledEncoders, encodeVideo, findEncoder, readFrameTimes, readWaveform, validateComposition } from './video-export.mjs'
 
@@ -120,7 +121,7 @@ const digest = data => createHash('sha256').update(data).digest('hex')
 async function writeAtomically(file, text, { projectFile = false, previousDigest } = {}) {
   const temporary = join(dirname(file), '.subx-' + randomUUID() + '.tmp')
   try {
-    await writeFile(temporary, text, { encoding: 'utf8', flag: 'wx', ...(projectFile && { mode: 0o600 }) })
+    await writeFile(temporary, text, { flag: 'wx', ...(typeof text === 'string' && { encoding: 'utf8' }), ...(projectFile && { mode: 0o600 }) })
     if (projectFile) {
       const destination = await lstat(file).catch(error => {
         if (error.code === 'ENOENT') return null
@@ -418,11 +419,18 @@ async function initialize() {
     const file = await selectFile(window, name, extensions)
     if (!file) return null
     const contents = await readFile(file)
-    const [first, second] = contents
-    let encoding = 'utf-8'
-    if (first === 0xff && second === 0xfe) encoding = 'utf-16le'
-    if (first === 0xfe && second === 0xff) encoding = 'utf-16be'
-    return { name: basename(file), extension: extname(file).toLowerCase(), text: decodeText(contents, file, encoding) }
+    let decoded
+    try {
+      decoded = decodeSubtitleText(contents)
+    } catch {
+      throw new Error('无法解码 ' + basename(file) + '，请另存为 UTF-8 后重试')
+    }
+    return {
+      name: basename(file),
+      extension: extname(file).toLowerCase(),
+      text: decoded.text,
+      encoding: decoded.encoding,
+    }
   }
   bind('subtitles:choose', window => chooseText(window, '字幕', ['srt', 'ass', 'vtt']))
   async function readImageFile(file) {
@@ -619,9 +627,12 @@ async function initialize() {
   })
   bind('video:cancel', window => { compositions.get(window)?.controller.abort() })
   bind('subtitles:export', async (window, data) => {
-    const { name, text, format } = data
+    const { name, text, format, encoding = 'utf-8', newline = 'lf' } = data
     if (!['srt', 'ass', 'vtt'].includes(format) || typeof text !== 'string' || typeof name !== 'string') {
       throw new Error('无效的导出内容')
+    }
+    if (!['utf-8', 'utf-8-bom', 'utf-16le', 'gb18030'].includes(encoding) || !['lf', 'crlf'].includes(newline)) {
+      throw new Error('无效的导出编码')
     }
     const title = name.replace(/[\\/:*?"<>|]/g, '_')
     const result = await dialog.showSaveDialog(window, {
@@ -629,7 +640,7 @@ async function initialize() {
       filters: [{ name: format.toUpperCase(), extensions: [format] }],
     })
     if (!result.filePath) return false
-    await writeAtomically(result.filePath, text)
+    await writeAtomically(result.filePath, encodeSubtitleText(text, encoding, newline))
     return true
   })
   ipcMain.on('menu:update', (event, groups) => {

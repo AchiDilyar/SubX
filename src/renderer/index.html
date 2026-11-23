@@ -485,6 +485,18 @@
         <button value="ass"><strong>ASS</strong><span>保留字幕样式与定位</span><svg class="icon" aria-hidden="true"><use href="#i-arrow"></use></svg></button>
         <button value="vtt"><strong>WebVTT</strong><span>网页字幕与简单样式</span><svg class="icon" aria-hidden="true"><use href="#i-arrow"></use></svg></button>
       </div>
+      <div class="export-options">
+        <label>编码<select id="export-encoding">
+          <option value="utf-8" selected>UTF-8</option>
+          <option value="utf-8-bom">UTF-8 BOM</option>
+          <option value="utf-16le">UTF-16LE</option>
+          <option value="gb18030">GB18030</option>
+        </select></label>
+        <label>换行<select id="export-newline">
+          <option value="lf" selected>LF</option>
+          <option value="crlf">CRLF</option>
+        </select></label>
+      </div>
       <p id="ass-export-note" class="muted" hidden>选择 SRT / VTT 会省略 ASS 样式。</p>
       <div class="dialog-actions"><button value="cancel">取消</button></div>
     </form>

@@ -452,6 +452,9 @@ dialog .dialog-actions button.primary:hover:not(:disabled) { background: var(--a
 #export-merge-row .settings-text { display: grid; gap: 2px; }
 #export-merge-row small { color: var(--muted); font-size: var(--text-xs); line-height: 1.45; }
 #export-merge-preview { margin: 0; max-height: 80px; overflow: auto; font-size: var(--text-xs); line-height: 1.5; white-space: pre-wrap; }
+.export-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 2px; }
+.export-options label { gap: 3px; color: var(--muted); font-size: var(--text-xs); }
+.export-options select { width: 100%; min-width: 0; height: 28px; padding: 2px 6px; }
 
 /* 质量检查面板 */
 .tab-count { min-width: 16px; margin-left: 4px; padding: 0 4px; border-radius: 8px; background: #5a4a2a; color: #ffd89a; font-size: 10px; line-height: 15px; text-align: center; }
