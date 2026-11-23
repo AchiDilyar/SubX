@@ -61,11 +61,9 @@ if (windows) {
   await writeFile(archive, bytes)
   const digest = createHash('sha256').update(bytes).digest('hex')
   if (digest !== windows.sha256) throw new Error('Windows FFmpeg 校验失败：' + digest)
-  const quoted = value => "'" + value.replace(/'/g, "''") + "'"
-  execFileSync('powershell.exe', [
-    '-NoProfile', '-NonInteractive', '-Command',
-    'Expand-Archive -LiteralPath ' + quoted(archive) + ' -DestinationPath ' + quoted(unpacked) + ' -Force',
-  ], { stdio: 'inherit' })
+  await mkdir(unpacked, { recursive: true })
+  // Windows 自带 bsdtar 可直接解 zip；避免 Windows PowerShell 7 Expand-Archive 的 .NET 重载问题。
+  execFileSync('tar.exe', ['-xf', archive, '-C', unpacked], { stdio: 'inherit' })
   for (const name of windows.names) {
     const source = await findFile(unpacked, name)
     if (!source) throw new Error('压缩包里没有 ' + name)
