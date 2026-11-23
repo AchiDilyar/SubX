@@ -220,8 +220,14 @@ try {
 } finally {
   socket?.close()
   if (child?.pid) {
-    child.kill()
-    await exited
+    if (process.platform === 'win32') {
+      // Electron 会留下 GPU/utility 子进程持有 profile；先杀进程树再清理临时目录。
+      execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+    } else {
+      child.kill()
+    }
+    await exited.catch(() => {})
   }
-  await rm(profile, { recursive: true, force: true, maxRetries: 8 })
+  if (process.platform === 'win32') await delay(500)
+  await rm(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
 }
