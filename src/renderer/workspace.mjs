@@ -1736,8 +1736,12 @@ function placePopover(menu, left, top) {
   const rect = menu.getBoundingClientRect()
   const width = rect.width || menu.offsetWidth
   const height = rect.height || menu.offsetHeight
-  menu.style.left = Math.max(4, Math.min(innerWidth - width - 4, left)) + 'px'
-  menu.style.top = Math.max(4, Math.min(innerHeight - height - 4, top)) + 'px'
+  // Windows 的顶层 popover 会把 left/top 计算回 0；用 transform 偏移，跨平台一致。
+  const x = Math.max(4, Math.min(innerWidth - width - 4, left))
+  const y = Math.max(4, Math.min(innerHeight - height - 4, top))
+  menu.style.left = '0px'
+  menu.style.top = '0px'
+  menu.style.transform = 'translate(' + x + 'px, ' + y + 'px)'
 }
 
 function showTabsMenu(side) {
