@@ -3,6 +3,7 @@ import { alignCue, frameBoundaries, nearestBoundary } from '../core/frame-grid.m
 import { inspectSrt, printTime, readTime, writeSrt } from '../core/srt.mjs'
 import { assStyleResetCues, assTextCues, captureCue, pasteCue, groupAssLayers, importAssLayers, moveCuesToTrack, fallbackAssStyle, field, newStyle, readAss, renameAssStyleReset, setField, writeAss } from '../core/ass.mjs'
 import { findMergePartner, mergedExportText, mergeTracks } from '../core/merge.mjs'
+import { analyzeProject, extendShortCues, fixTrailingSpaces, qcSettings, splitLongCues } from '../core/qc.mjs'
 import { findTextMatches, replaceTextAt, replaceTextMatches } from '../core/text.mjs'
 
 import { assLayers, bindComposition, fadeOf } from './composition.mjs'
@@ -1116,6 +1117,7 @@ function render() {
   $('watermark-y').value = String(watermarkImage?.y ?? 6)
   void syncWatermarkImage()
   applyWatermarkOverlay()
+  if ($('qc-tab').getAttribute('aria-selected') === 'true') renderQcPanel()
 }
 
 function refreshTrackControls() {
@@ -1687,16 +1689,20 @@ function endDrag(pointer, commit) {
 
 function switchTab(tab, preview = true) {
   // 标签组使用 roving tabindex：只有当前标签在 Tab 序列里，方向键在标签间移动。
-  for (const name of ['styles', 'settings', 'cue', 'script']) {
+  for (const name of ['styles', 'settings', 'qc', 'cue', 'script']) {
     $(name + '-tab').tabIndex = tab === name ? 0 : -1
   }
-  if ($(tab + '-tab').getAttribute('aria-selected') === 'true') return
+  if ($(tab + '-tab').getAttribute('aria-selected') === 'true') {
+    if (tab === 'qc') renderQcPanel()
+    return
+  }
   if (punch && tab !== 'script') finishPunch()
-  for (const name of ['styles', 'settings', 'cue', 'script']) {
+  for (const name of ['styles', 'settings', 'qc', 'cue', 'script']) {
     $(name + '-tab').setAttribute('aria-selected', String(tab === name))
     $(name + '-panel').hidden = tab !== name
   }
   revealTab(tab)
+  if (tab === 'qc') renderQcPanel()
   if (preview) refreshInspectorPreview()
 }
 
@@ -2942,6 +2948,102 @@ const findDialogObserver = new MutationObserver(() => {
 for (const dialog of document.querySelectorAll('dialog')) {
   findDialogObserver.observe(dialog, { attributes: true, attributeFilter: ['open'] })
 }
+
+// —— 质量检查 ——
+const qcTypeLabels = {
+  cps: '语速', short: '过短', long: '过长', empty: '空正文',
+  trailing: '行尾空格', blank: '空行', overlap: '重叠', punctuation: '标点',
+}
+
+function renderQcPanel() {
+  if ($('qc-panel').hidden) return
+  const settings = qcSettings(project)
+  $('qc-cps').value = String(settings.cps)
+  $('qc-min').value = String(settings.minDuration / 1000)
+  $('qc-max').value = String(settings.maxDuration / 1000)
+  const { issues, counts } = analyzeProject(project, settings)
+  const detail = Object.entries(counts).map(([type, count]) => (qcTypeLabels[type] ?? type) + ' ' + count).join(' · ')
+  $('qc-summary').textContent = issues.length ? issues.length + ' 个问题 · ' + detail : '没有发现问题'
+  $('qc-count').hidden = !issues.length
+  $('qc-count').textContent = issues.length > 99 ? '99+' : String(issues.length)
+  $('qc-empty').hidden = issues.length > 0
+  $('qc-fix-trailing').disabled = !counts.trailing
+  $('qc-fix-short').disabled = !counts.short
+  $('qc-fix-split').disabled = !counts.long
+  const rows = []
+  for (const issue of issues.slice(0, 200)) {
+    const owner = project.tracks.find(track => track.id === issue.trackId)
+    if (!owner) continue
+    const row = element('button', 'qc-issue')
+    row.type = 'button'
+    const badge = element('span', 'qc-badge ' + issue.type, qcTypeLabels[issue.type] ?? issue.type)
+    const text = element('span', 'qc-issue-text', issue.message)
+    const meta = element('span', 'qc-issue-meta', trackLabel(owner) + ' · ' + printTime(issue.start, '.'))
+    row.append(badge, text, meta)
+    row.addEventListener('click', () => locateQcIssue(issue))
+    rows.push(row)
+  }
+  if (issues.length > 200) rows.push(element('p', 'muted', '其余 ' + (issues.length - 200) + ' 条未列出，请先修复当前问题。'))
+  $('qc-list').replaceChildren(...rows)
+}
+
+function locateQcIssue(issue) {
+  const cue = findCue(project, issue.cueId)
+  const owner = cue && trackFor(cue.id)
+  if (!cue || !owner) {
+    renderQcPanel()
+    return
+  }
+  if (owner.locked) {
+    status('轨道已锁定，解锁后可定位', 'warn')
+    return
+  }
+  if (linkMode) setLinkMode(false)
+  pick(owner, cue)
+  seek(cue.start)
+  revealTimelinePosition(cue.start)
+  renderViewport()
+  switchTab('qc')
+}
+
+function runQcFix(fix, label) {
+  if (hasPendingForm() || editorOpen()) {
+    status('请先应用或取消字幕修改，再批量修复', 'warn')
+    return
+  }
+  let result
+  edit(() => { result = fix() })
+  const skipped = result.skipped ? ' · 跳过 ' + result.skipped + ' 条' : ''
+  status(label + '：' + result.fixed + ' 条' + skipped, result.fixed ? 'success' : 'warn')
+}
+
+function applyQcThreshold(key, value) {
+  const next = { ...qcSettings(project) }
+  if (!Number.isFinite(value)) {
+    renderQcPanel()
+    return
+  }
+  if (key === 'cps') next.cps = Math.max(1, Math.min(60, Math.round(value)))
+  if (key === 'minDuration') next.minDuration = Math.max(0, Math.min(10000, Math.round(value)))
+  if (key === 'maxDuration') next.maxDuration = Math.max(1000, Math.min(60000, Math.round(value)))
+  if (next.maxDuration < next.minDuration) {
+    status('最长时长不能短于最短时长', 'warn')
+    renderQcPanel()
+    return
+  }
+  edit(() => {
+    project.settings = { fade: false, watermark: false, fadeDuration: 100, ...project.settings, qc: next }
+  })
+}
+
+action('qc-tab', () => switchTab('qc'))
+action('qc-refresh', () => renderQcPanel())
+action('qc-fix-trailing', () => runQcFix(() => fixTrailingSpaces(project), '已去除行尾空格'))
+action('qc-fix-short', () => runQcFix(() => extendShortCues(project), '已延长过短字幕'))
+action('qc-fix-split', () => runQcFix(() => splitLongCues(project), '已拆分过长字幕'))
+$('qc-cps').addEventListener('change', event => applyQcThreshold('cps', Number(event.target.value)))
+$('qc-min').addEventListener('change', event => applyQcThreshold('minDuration', Number(event.target.value) * 1000))
+$('qc-max').addEventListener('change', event => applyQcThreshold('maxDuration', Number(event.target.value) * 1000))
 
 // —— 文稿打轴 ——
 const scriptDialog = $('script-dialog')

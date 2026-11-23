@@ -117,6 +117,9 @@ async function run() {
   assert.equal(await exec('getComputedStyle(document.querySelector("#settings-tab .icon")).color'), 'rgb(255, 255, 255)', 'Show the other active tab icon in white')
   assert.notEqual(await exec('getComputedStyle(document.querySelector("#styles-tab .icon")).color'), 'rgb(255, 255, 255)', 'Keep inactive tab icons muted')
   await click('styles-tab')
+  await click('qc-tab')
+  await expect('!document.querySelector("#qc-panel").hidden && document.querySelector("#qc-cps").value === "17" && document.querySelector("#qc-summary").textContent.includes("问题")', 'open the quality check panel')
+  await click('styles-tab')
   const alignedChrome = await exec(`(() => {
     const rail = document.querySelector('.toolrail').getBoundingClientRect()
     const trackData = document.querySelector('#track-data').getBoundingClientRect()
@@ -1195,6 +1198,12 @@ async function run() {
   await exec('document.querySelector("#export-format button[value=srt]").click()')
   await expect('document.querySelector("#status").textContent.startsWith("已导出 SRT")', 'export merged bilingual SRT')
   assert.match(await readFile(join(directory, 'merged.srt'), 'utf8'), /你好\r?\nHello/, 'merge upper and lower text into two lines')
+  await click('menu-find')
+  await exec('(() => { const scope = document.getElementById("find-scope"); scope.value = "all"; scope.dispatchEvent(new Event("change")); const query = document.getElementById("find-query"); query.value = "Hello"; query.dispatchEvent(new Event("input")) })()')
+  await expect('document.querySelector("#find-summary").textContent.includes("匹配") && !document.querySelector("#find-summary").textContent.includes("没有")', 'find subtitle text across all tracks')
+  await click('find-next')
+  await expect('document.querySelector("#cue-text").value.includes("Hello") && !document.querySelector("#find-panel").hidden', 'navigate to a cross-track match')
+  await exec('document.querySelector("#find-close").click()')
   await menuCommand('.cue', '拆分双语…')
   await expect(`document.querySelector('#split-dialog').open && document.querySelector('#split-dialog button[value=confirm]').disabled &&
     document.querySelector('#split-preview').textContent.includes('已有链接')`, 'prevent a split with no eligible pairs')

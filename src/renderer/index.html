@@ -157,6 +157,7 @@
           <div class="tabs-scroll" id="tabs-scroll" role="tablist" aria-label="配置区标签">
             <button id="styles-tab" role="tab" aria-selected="true" aria-controls="styles-panel"><svg class="icon" aria-hidden="true"><use href="#i-style"></use></svg>样式管理</button>
             <button id="settings-tab" role="tab" aria-selected="false" aria-controls="settings-panel"><svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg>项目设置</button>
+            <button id="qc-tab" role="tab" aria-selected="false" aria-controls="qc-panel"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>质量检查<span id="qc-count" class="tab-count" hidden></span></button>
             <button id="cue-tab" role="tab" aria-selected="false" aria-controls="cue-panel" hidden><svg class="icon" aria-hidden="true"><use href="#i-cue"></use></svg>字幕编辑</button>
             <button id="script-tab" role="tab" aria-selected="false" aria-controls="script-panel"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg>待打轴</button>
           </div>
@@ -198,6 +199,24 @@
                 </div>
               </div>
             </section>
+          </div>
+        </section>
+        <section id="qc-panel" class="inspector-body" role="tabpanel" aria-labelledby="qc-tab" hidden>
+          <div class="qc-heading">
+            <span id="qc-summary">0 个问题</span>
+            <button id="qc-refresh" type="button" title="重新检查" aria-label="重新检查"><svg class="icon" aria-hidden="true"><use href="#i-recent"></use></svg></button>
+          </div>
+          <div class="qc-thresholds">
+            <label>语速上限<input id="qc-cps" type="number" min="1" max="60" step="1"></label>
+            <label>最短（秒）<input id="qc-min" type="number" min="0" max="10" step="0.1"></label>
+            <label>最长（秒）<input id="qc-max" type="number" min="1" max="60" step="0.1"></label>
+          </div>
+          <p id="qc-empty" class="muted">没有发现问题。</p>
+          <ul id="qc-list" class="qc-list"></ul>
+          <div class="qc-actions">
+            <button id="qc-fix-trailing" type="button">去除行尾空格</button>
+            <button id="qc-fix-short" type="button">延长过短字幕</button>
+            <button id="qc-fix-split" type="button">拆分过长字幕</button>
           </div>
         </section>
         <section id="script-panel" class="inspector-body" role="tabpanel" aria-labelledby="script-tab" hidden>

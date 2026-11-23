@@ -108,6 +108,13 @@ export function validateProject(project) {
         (!Number.isFinite(project.settings.fadeDuration) || project.settings.fadeDuration < 0 || project.settings.fadeDuration > 2000)))) {
     throw new Error('工程设置无效')
   }
+  const qc = project.settings?.qc
+  if (qc !== undefined && (!qc || typeof qc !== 'object' ||
+      !Number.isFinite(qc.cps) || qc.cps < 1 || qc.cps > 60 ||
+      !Number.isFinite(qc.minDuration) || qc.minDuration < 0 || qc.minDuration > 10000 ||
+      !Number.isFinite(qc.maxDuration) || qc.maxDuration < qc.minDuration || qc.maxDuration > 60000)) {
+    throw new Error('工程中的质量检查设置无效')
+  }
   const watermark = project.settings?.watermarkImage
   if (watermark !== undefined && watermark !== null && (typeof watermark !== 'object' ||
       typeof watermark.path !== 'string' || !watermark.path.trim() || watermark.path.includes('\0') ||
