@@ -117,10 +117,10 @@ async function run() {
   }
   await expect('document.getElementById("ruler").children.length > 0', 'load Electron workspace')
   assert.equal(await exec('document.querySelector("#timecode").value'), '00:00:00.00', 'Use a 30 fps timebase for empty projects')
-  assert.equal(await exec('getComputedStyle(document.querySelector("#styles-tab .icon")).color'), 'rgb(255, 255, 255)', 'Show the active tab icon in white')
+  await expect('getComputedStyle(document.querySelector("#styles-tab .icon")).color === "rgb(255, 255, 255)"', 'Show the active tab icon in white')
   await click('settings-tab')
-  assert.equal(await exec('getComputedStyle(document.querySelector("#settings-tab .icon")).color'), 'rgb(255, 255, 255)', 'Show the other active tab icon in white')
-  assert.notEqual(await exec('getComputedStyle(document.querySelector("#styles-tab .icon")).color'), 'rgb(255, 255, 255)', 'Keep inactive tab icons muted')
+  await expect('getComputedStyle(document.querySelector("#settings-tab .icon")).color === "rgb(255, 255, 255)"', 'Show the other active tab icon in white')
+  await expect('getComputedStyle(document.querySelector("#styles-tab .icon")).color !== "rgb(255, 255, 255)"', 'Keep inactive tab icons muted')
   await click('styles-tab')
   await click('qc-tab')
   await expect('!document.querySelector("#qc-panel").hidden && document.querySelector("#qc-cps").value === "17" && document.querySelector("#qc-summary").textContent.includes("问题")', 'open the quality check panel')
