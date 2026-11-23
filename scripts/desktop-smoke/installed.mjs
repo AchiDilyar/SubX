@@ -221,8 +221,10 @@ try {
   socket?.close()
   if (child?.pid) {
     if (process.platform === 'win32') {
-      // Electron 会留下 GPU/utility 子进程持有 profile；先杀进程树再清理临时目录。
-      execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+      // Electron 会留下 GPU/utility 子进程持有 profile；进程可能已退出，失败不阻塞清理。
+      try {
+        execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+      } catch {}
     } else {
       child.kill()
     }
