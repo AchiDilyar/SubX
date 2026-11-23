@@ -1767,11 +1767,17 @@ function showTabsMenu(side) {
   const place = () => placePopover(tabsMenu, side === 'left' ? box.left : box.right - tabsMenu.offsetWidth, box.bottom + 4)
   place()
   requestAnimationFrame(place)
-  window.__tabMenuDebug = () => ({
-    left: tabsMenu.style.left,
-    top: tabsMenu.style.top,
-    rect: tabsMenu.getBoundingClientRect().toJSON(),
-  })
+  window.__tabMenuDebug = () => {
+    const style = getComputedStyle(tabsMenu)
+    return {
+      left: tabsMenu.style.left,
+      top: tabsMenu.style.top,
+      position: style.position,
+      computedLeft: style.left,
+      computedTop: style.top,
+      rect: tabsMenu.getBoundingClientRect().toJSON(),
+    }
+  }
 }
 function revealTab(name) {
   const button = $(name + '-tab')
