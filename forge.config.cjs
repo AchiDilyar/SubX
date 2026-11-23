@@ -8,6 +8,7 @@ const identity = process.env.SUBX_MAC_SIGN_IDENTITY
 const notarization = process.env.SUBX_MAC_NOTARY_PROFILE
 const windowsCertificate = process.env.SUBX_WINDOWS_CERTIFICATE
 const macIcon = join(__dirname, 'src', 'assets', 'SubX.icns')
+const windowsIcon = join(__dirname, 'src', 'assets', 'SubX.ico')
 const projectIcon = join(__dirname, 'src', 'assets', 'SubXProjectFile.icns')
 // 随包分发的 FFmpeg 内核（npm run fetch:ffmpeg 下载）；没有就不带，运行时回退到系统 PATH。
 const bundledTools = ['ffmpeg', 'ffmpeg.exe', 'ffprobe', 'ffprobe.exe']
@@ -18,7 +19,13 @@ module.exports = {
     asar: true,
     ignore: [/^\/scripts\/desktop-smoke(?:\/|$)/, /^\/resources(?:\/|$)/, /^\/src\/assets\/SubX\.icns$/, /^\/src\/assets\/SubXProjectFile\.icns$/],
     appBundleId: 'app.subx.desktop',
-    icon: macIcon,
+    icon: process.platform === 'win32' ? windowsIcon : macIcon,
+    win32metadata: {
+      CompanyName: 'SubX',
+      FileDescription: 'SubX 字幕编辑器',
+      OriginalFilename: 'SubX.exe',
+      ProductName: 'SubX',
+    },
     extraResource: [projectIcon, ...bundledTools],
     extendInfo: {
       CFBundleDocumentTypes: [{
@@ -59,6 +66,8 @@ module.exports = {
       name: '@electron-forge/maker-squirrel',
       config: {
         name: 'SubX',
+        setupIcon: windowsIcon,
+        iconUrl: 'https://raw.githubusercontent.com/AchiDilyar/SubX/main/src/assets/SubX.ico',
         ...(windowsCertificate && {
           certificateFile: windowsCertificate,
           certificatePassword: process.env.SUBX_WINDOWS_CERTIFICATE_PASSWORD,

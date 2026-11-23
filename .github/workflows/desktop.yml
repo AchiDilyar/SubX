@@ -35,6 +35,8 @@ jobs:
       - run: npm test
       - run: npm run test:desktop
       - if: github.event_name == 'workflow_dispatch' && inputs.make_installers
+        run: npm run fetch:ffmpeg
+      - if: github.event_name == 'workflow_dispatch' && inputs.make_installers
         run: npm run make -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
       - if: github.event_name == 'workflow_dispatch' && inputs.make_installers && runner.os == 'Windows'
         shell: pwsh

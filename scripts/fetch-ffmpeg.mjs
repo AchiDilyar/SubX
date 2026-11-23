@@ -15,14 +15,67 @@ const targets = {
     { name: 'ffprobe', url: 'https://www.osxexperts.net/ffprobe902arm.zip', sha256: '8d56278ec2ba80f35138e7dceccb1a72eff951156691d8c733066ebd7628d3f2' },
   ],
 }
+// Gyan.dev 的 Windows essentials 构建包含 ffmpeg.exe / ffprobe.exe；哈希固定到 9.1 版本。
+const windowsTargets = {
+  'win32-x64': {
+    url: 'https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.1-essentials_build.zip',
+    sha256: 'b9bbbb3acece000cbeec994f856649354e52c773807841e78908374b24d658fd',
+    names: ['ffmpeg.exe', 'ffprobe.exe'],
+  },
+}
 
 const key = process.platform + '-' + process.arch
+const windows = windowsTargets[key]
 const downloads = targets[key]
-if (!downloads) {
+if (!windows && !downloads) {
   console.error('没有 ' + key + ' 的内置下载源。请手动把 ffmpeg / ffprobe 放到 resources/（Windows 为 .exe）。')
   process.exit(1)
 }
 await mkdir(resources, { recursive: true })
+
+async function findFile(directory, name) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      const found = await findFile(path, name)
+      if (found) return found
+    } else if (entry.name === name) {
+      return path
+    }
+  }
+  return null
+}
+
+if (windows) {
+  const present = windows.names.every(name => existsSync(join(resources, name)))
+  if (present && !process.argv.includes('--force')) {
+    console.log('Windows FFmpeg 已存在，跳过。')
+    process.exit(0)
+  }
+  const archive = join(resources, 'ffmpeg-win.zip')
+  const unpacked = join(resources, 'ffmpeg-win-unpacked')
+  console.log('下载 ' + windows.url)
+  const response = await fetch(windows.url, { signal: AbortSignal.timeout(600000) })
+  if (!response.ok) throw new Error('下载失败：HTTP ' + response.status)
+  const bytes = Buffer.from(await response.arrayBuffer())
+  await writeFile(archive, bytes)
+  const digest = createHash('sha256').update(bytes).digest('hex')
+  if (digest !== windows.sha256) throw new Error('Windows FFmpeg 校验失败：' + digest)
+  const quoted = value => "'" + value.replace(/'/g, "''") + "'"
+  execFileSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    'Expand-Archive -LiteralPath ' + quoted(archive) + ' -DestinationPath ' + quoted(unpacked) + ' -Force',
+  ], { stdio: 'inherit' })
+  for (const name of windows.names) {
+    const source = await findFile(unpacked, name)
+    if (!source) throw new Error('压缩包里没有 ' + name)
+    await rename(source, join(resources, name))
+  }
+  await rm(archive, { force: true })
+  await rm(unpacked, { recursive: true, force: true })
+  console.log('Windows FFmpeg 已就绪（' + Math.round(bytes.length / 1024 / 1024) + ' MB）')
+  process.exit(0)
+}
 for (const download of downloads) {
   const target = join(resources, download.name)
   if (existsSync(target) && !process.argv.includes('--force')) {

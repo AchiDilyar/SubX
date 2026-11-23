@@ -8,6 +8,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { decodeSubtitleText, encodeSubtitleText } from '../core/encoding.mjs'
 import { normalizeStyleNames, validateProject } from '../core/project.mjs'
+import { ensureFileAssociation, registerFileAssociation, unregisterFileAssociation } from './windows-association.mjs'
 import { bundledEncoders, encodeVideo, findEncoder, readFrameTimes, readWaveform, validateComposition } from './video-export.mjs'
 
 const entry = 'subx://app/renderer/index.html'
@@ -676,6 +677,17 @@ async function initialize() {
   })
 }
 
+// Squirrel 安装/更新/卸载事件：先维护 .subx 关联，再交给 electron-squirrel-startup 退出。
+if (process.platform === 'win32') {
+  const squirrelEvent = process.argv.find(argument => argument.startsWith('--squirrel-'))
+  try {
+    if (squirrelEvent === '--squirrel-install' || squirrelEvent === '--squirrel-updated') registerFileAssociation()
+    if (squirrelEvent === '--squirrel-uninstall') unregisterFileAssociation()
+  } catch (error) {
+    console.error('Could not update .subx file association:', error?.message ?? error)
+  }
+}
+
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) {
   app.quit()
@@ -692,7 +704,14 @@ if (!hasSingleInstanceLock) {
     const file = argv.find(argument => /\.subx$/i.test(argument))
     if (file) window.webContents.send('app:open-path', file)
   })
-  if (process.platform === 'win32') app.setAppUserModelId('com.squirrel.SubX.SubX')
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.squirrel.SubX.SubX')
+    try {
+      ensureFileAssociation()
+    } catch (error) {
+      console.error('Could not ensure .subx file association:', error?.message ?? error)
+    }
+  }
   app.whenReady().then(initialize).catch(error => {
     console.error(error)
     dialog.showErrorBox('SubX 启动失败', error.message)
