@@ -24,6 +24,25 @@ const windowsTargets = {
   },
 }
 
+async function downloadBytes(url, attempts = 4) {
+  let last
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(600000),
+        headers: { 'user-agent': 'SubX-Fetch-FFmpeg' },
+      })
+      if (response.ok) return Buffer.from(await response.arrayBuffer())
+      last = new Error('下载失败：HTTP ' + response.status)
+    } catch (error) {
+      last = error
+    }
+    console.error('下载尝试 ' + attempt + '/' + attempts + ' 失败：' + (last?.message ?? last))
+    if (attempt < attempts) await new Promise(resolve => setTimeout(resolve, attempt * 5000))
+  }
+  throw last
+}
+
 const key = process.platform + '-' + process.arch
 const windows = windowsTargets[key]
 const downloads = targets[key]
@@ -55,9 +74,7 @@ if (windows) {
   const archive = join(resources, 'ffmpeg-win.zip')
   const unpacked = join(resources, 'ffmpeg-win-unpacked')
   console.log('下载 ' + windows.url)
-  const response = await fetch(windows.url, { signal: AbortSignal.timeout(600000) })
-  if (!response.ok) throw new Error('下载失败：HTTP ' + response.status)
-  const bytes = Buffer.from(await response.arrayBuffer())
+  const bytes = await downloadBytes(windows.url)
   await writeFile(archive, bytes)
   const digest = createHash('sha256').update(bytes).digest('hex')
   if (digest !== windows.sha256) throw new Error('Windows FFmpeg 校验失败：' + digest)
@@ -83,9 +100,7 @@ for (const download of downloads) {
   const archive = join(resources, download.name + '.zip')
   const unpacked = join(resources, download.name + '-unpacked')
   console.log('下载 ' + download.url)
-  const response = await fetch(download.url)
-  if (!response.ok) throw new Error('下载失败：HTTP ' + response.status)
-  const bytes = Buffer.from(await response.arrayBuffer())
+  const bytes = await downloadBytes(download.url)
   await writeFile(archive, bytes)
   execFileSync('ditto', ['-x', '-k', archive, unpacked])
   const binary = (await readdir(unpacked)).find(name => name === download.name)
