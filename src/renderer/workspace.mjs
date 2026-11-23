@@ -1741,7 +1741,7 @@ function placePopover(menu, left, top) {
   const y = Math.max(4, Math.min(innerHeight - height - 4, top))
   menu.style.left = '0px'
   menu.style.top = '0px'
-  menu.style.transform = 'translate(' + x + 'px, ' + y + 'px)'
+  menu.style.translate = x + 'px ' + y + 'px'
 }
 
 function closeTabsMenu() {
@@ -1784,6 +1784,8 @@ function showTabsMenu(side) {
       position: style.position,
       computedLeft: style.left,
       computedTop: style.top,
+      translate: tabsMenu.style.translate,
+      computedTranslate: style.translate,
       rect: tabsMenu.getBoundingClientRect().toJSON(),
     }
   }
