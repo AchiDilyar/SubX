@@ -42,6 +42,15 @@ export function createAssPreview(host, reportFailure, redraw) {
     releaseUrls(layer)
   }
 
+  function fallBackToText(layer, message) {
+    disposePlayer(layer)
+    layer.canvas.dataset.ready = 'false'
+    layer.canvas.hidden = true
+    layer.canvas.getContext('2d').clearRect(0, 0, layer.canvas.width, layer.canvas.height)
+    reportFailure(message)
+    redraw()
+  }
+
   async function syncFonts(layer, names) {
     const key = names.join('\n')
     if (key === layer.fontKey) return
@@ -73,11 +82,7 @@ export function createAssPreview(host, reportFailure, redraw) {
           if (layer.player !== player) return
           // Octopus disposes its worker after calling onError.
           layer.player = undefined
-          releaseUrls(layer)
-          canvas.dataset.ready = 'false'
-          canvas.hidden = true
-          reportFailure('ASS 渲染器未能启动，已改用基础文本预览。')
-          redraw()
+          fallBackToText(layer, 'ASS 渲染器未能启动，已改用基础文本预览。')
         },
       })
       layer.player = player
@@ -94,8 +99,7 @@ export function createAssPreview(host, reportFailure, redraw) {
       worker.addEventListener('message', stylesReady)
       worker.postMessage({ target: 'get-styles' })
     } catch (error) {
-      releaseUrls(layer)
-      reportFailure('无法初始化 ASS 渲染器。' + error.message)
+      fallBackToText(layer, '无法初始化 ASS 渲染器。' + error.message)
     }
   }
 

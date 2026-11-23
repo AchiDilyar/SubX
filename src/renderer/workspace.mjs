@@ -1624,6 +1624,12 @@ function updateTabPages() {
   tabsMoreLeft.hidden = hiddenTabButtons('left').length === 0
   tabsMoreRight.hidden = hiddenTabButtons('right').length === 0
 }
+// 弹层以自身尺寸为基准夹在视口内，靠近顶部或底部时都不会溢出。
+function placePopover(menu, left, top) {
+  menu.style.left = Math.max(4, Math.min(innerWidth - menu.offsetWidth - 4, left)) + 'px'
+  menu.style.top = Math.max(4, Math.min(innerHeight - menu.offsetHeight - 4, top)) + 'px'
+}
+
 function showTabsMenu(side) {
   const hidden = hiddenTabButtons(side)
   if (!hidden.length) return
@@ -1648,10 +1654,7 @@ function showTabsMenu(side) {
   tabsMenu.style.left = '0px'
   tabsMenu.style.top = '0px'
   tabsMenu.showPopover()
-  const width = tabsMenu.offsetWidth
-  const height = tabsMenu.offsetHeight
-  tabsMenu.style.left = Math.max(4, Math.min(innerWidth - width - 4, side === 'left' ? box.left : box.right - width)) + 'px'
-  tabsMenu.style.top = Math.min(innerHeight - height - 4, box.bottom + 4) + 'px'
+  placePopover(tabsMenu, side === 'left' ? box.left : box.right - tabsMenu.offsetWidth, box.bottom + 4)
 }
 function revealTab(name) {
   const button = $(name + '-tab')
@@ -3208,10 +3211,7 @@ function showCueStyleMenu(anchor) {
   cueStyleMenu.style.left = '0px'
   cueStyleMenu.style.top = '0px'
   cueStyleMenu.showPopover()
-  const width = cueStyleMenu.offsetWidth
-  const height = cueStyleMenu.offsetHeight
-  cueStyleMenu.style.left = Math.max(4, Math.min(innerWidth - width - 4, box.left)) + 'px'
-  cueStyleMenu.style.top = Math.min(innerHeight - height - 4, box.bottom + 4) + 'px'
+  placePopover(cueStyleMenu, box.left, box.bottom + 4)
 }
 
 const timelineMenu = $('timeline-menu')
@@ -3268,8 +3268,7 @@ scroll.addEventListener('contextmenu', event => {
   const box = event.target.getBoundingClientRect()
   const x = event.clientX || box.left
   const y = event.clientY || box.bottom
-  timelineMenu.style.left = Math.max(4, Math.min(x, innerWidth - timelineMenu.offsetWidth - 4)) + 'px'
-  timelineMenu.style.top = Math.max(4, Math.min(y, innerHeight - timelineMenu.offsetHeight - 4)) + 'px'
+  placePopover(timelineMenu, x, y)
   timelineMenu.querySelector('button:enabled')?.focus({ preventScroll: true })
 })
 

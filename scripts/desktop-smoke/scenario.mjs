@@ -106,6 +106,10 @@ async function run() {
     await exec(`Array.from(document.querySelectorAll('#timeline-menu button')).find(item => item.textContent === ${JSON.stringify(label)}).click()`)
   }
 
+  const captureScreenshot = async path => {
+    const capture = await contents.debugger.sendCommand('Page.captureScreenshot', { format: 'png' })
+    await writeFile(path, Buffer.from(capture.data, 'base64'))
+  }
   await expect('document.getElementById("ruler").children.length > 0', 'load Electron workspace')
   assert.equal(await exec('document.querySelector("#timecode").value'), '00:00:00.00', 'Use a 30 fps timebase for empty projects')
   assert.equal(await exec('getComputedStyle(document.querySelector("#styles-tab .icon")).color'), 'rgb(255, 255, 255)', 'Show the active tab icon in white')
@@ -113,6 +117,41 @@ async function run() {
   assert.equal(await exec('getComputedStyle(document.querySelector("#settings-tab .icon")).color'), 'rgb(255, 255, 255)', 'Show the other active tab icon in white')
   assert.notEqual(await exec('getComputedStyle(document.querySelector("#styles-tab .icon")).color'), 'rgb(255, 255, 255)', 'Keep inactive tab icons muted')
   await click('styles-tab')
+  const alignedChrome = await exec(`(() => {
+    const rail = document.querySelector('.toolrail').getBoundingClientRect()
+    const trackData = document.querySelector('#track-data').getBoundingClientRect()
+    const zoom = document.querySelector('#timeline-zoom')
+    const zoomBox = zoom.getBoundingClientRect()
+    return {
+      railWidth: rail.width,
+      tokenWidth: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--toolrail-width')),
+      zoomOffset: Math.abs((zoomBox.left - parseFloat(getComputedStyle(zoom).marginLeft)) - trackData.left),
+    }
+  })()`)
+  assert.equal(alignedChrome.railWidth, alignedChrome.tokenWidth, 'Keep the timeline toolrail on its layout token')
+  assert(alignedChrome.zoomOffset <= 1, 'Align the zoom bar with the timeline after the track headings: ' + JSON.stringify(alignedChrome))
+  const viewportFit = await exec(`({
+    horizontal: document.documentElement.scrollWidth - innerWidth,
+    vertical: document.documentElement.scrollHeight - innerHeight,
+  })`)
+  assert(viewportFit.horizontal <= 1 && viewportFit.vertical <= 1,
+    'Keep the workspace free of viewport overflow: ' + JSON.stringify(viewportFit))
+  await exec(`document.querySelector('.upper').style.setProperty('--inspector-width', '255px')`)
+  await delay(120)
+  const narrowInspector = await exec(`(() => {
+    const inspector = document.querySelector('.inspector')
+    const body = document.querySelector('#styles-panel')
+    const row = document.querySelector('.style-list-item')
+    return {
+      overflow: inspector.scrollWidth - inspector.clientWidth,
+      bodyOverflow: body.scrollWidth - body.clientWidth,
+      rowOverflow: row ? row.scrollWidth - row.clientWidth : 0,
+    }
+  })()`)
+  assert(narrowInspector.overflow <= 1 && narrowInspector.bodyOverflow <= 1 && narrowInspector.rowOverflow <= 1,
+    'Keep the inspector and style rows inside a 255px panel: ' + JSON.stringify(narrowInspector))
+  await exec(`document.querySelector('.upper').style.removeProperty('--inspector-width')`)
+  await delay(120)
   const tabStyles = await exec(`(() => {
     const active = getComputedStyle(document.querySelector('#styles-tab'))
     const inactive = getComputedStyle(document.querySelector('#settings-tab'))
@@ -124,7 +163,8 @@ async function run() {
   await delay(150)
   const tabHover = await exec(`(() => { const style = getComputedStyle(document.querySelector('#settings-tab')); return { background: style.backgroundColor, color: style.color } })()`)
   assert.equal(tabHover.background, 'rgba(0, 0, 0, 0)', 'Keep tab hover free of a background block')
-  assert.notEqual(tabHover.color, tabStyles.inactiveColor, 'Brighten the hovered tab text')
+  assert.notEqual(tabHover.color, tabStyles.inactiveColor,
+    'Brighten the hovered tab text: ' + JSON.stringify({ ...tabHover, point: tabPoint, hovered: await exec('document.querySelector("#settings-tab").matches(":hover")') }))
   await mouse('mouseMoved', 700, 250)
   await exec(`document.querySelector('#tabs-scroll').style.flex = '0 1 160px'`)
   await delay(300)
@@ -134,8 +174,17 @@ async function run() {
   assert(tabOverflow.left || tabOverflow.right, 'Show an ellipsis when tabs overflow: ' + JSON.stringify(tabOverflow))
   await exec(`(document.querySelector('#tabs-more-right').hidden ? document.querySelector('#tabs-more-left') : document.querySelector('#tabs-more-right')).click()`)
   await delay(200)
-  const tabMenu = await exec(`(() => ({ open: document.querySelector('#tabs-menu').matches(':popover-open'), items: [...document.querySelectorAll('#tabs-menu button')].map(button => button.textContent.trim()) }))()`)
+  const tabMenu = await exec(`(() => {
+    const menu = document.querySelector('#tabs-menu')
+    const box = menu.getBoundingClientRect()
+    return {
+      open: menu.matches(':popover-open'),
+      items: [...menu.querySelectorAll('button')].map(button => button.textContent.trim()),
+      inside: box.left >= 3 && box.top >= 3 && box.right <= innerWidth - 3 && box.bottom <= innerHeight - 3,
+    }
+  })()`)
   assert(tabMenu.open && tabMenu.items.length > 0, 'List the hidden tabs in the ellipsis menu: ' + JSON.stringify(tabMenu))
+  assert(tabMenu.inside, 'Keep the tab ellipsis menu inside the viewport: ' + JSON.stringify(tabMenu))
   await exec('document.querySelector("#tabs-menu button").click()')
   await delay(300)
   const revealedTab = await exec(`(() => {
@@ -170,6 +219,7 @@ async function run() {
     const nativeEdit = nativeMenus.find(item => item.label === '编辑')
     assert.deepEqual(nativeEdit.submenu.items.map(item => item.label), ['撤销', '重做'], 'Keep only undo and redo in the native edit menu')
   }
+  if (process.env.SUBX_SCREENSHOT_PATH) await captureScreenshot(process.env.SUBX_SCREENSHOT_PATH)
   await click('menu-file')
   await expect('!document.querySelector("#menu-file-popup").hidden && document.querySelector("#menu-file").getAttribute("aria-expanded") === "true"', 'open the file menu with icon items')
   assert.deepEqual(await exec('[...document.querySelectorAll("#menu-file-popup button")].map(button => button.id)'), ['new-project', 'open-project', 'recent-projects', 'save-project', 'save-project-as', 'menu-open-media', 'blank-video', 'import-subtitles', 'import-script', 'menu-quit'], 'List the file commands in order')
@@ -245,8 +295,7 @@ async function run() {
     await click('waveform-mode')
     await click('waveform-mode')
 
-    const capture = await contents.debugger.sendCommand('Page.captureScreenshot', { format: 'png' })
-    await writeFile('/private/tmp/subx-icons-check.png', Buffer.from(capture.data, 'base64'))
+    await captureScreenshot(process.env.SUBX_ICON_SCREENSHOT_PATH || '/private/tmp/subx-icons-check.png')
     const squares = await exec(`[...document.querySelectorAll('.timeline-controls button, .toolrail button, .heading-actions button, .track-heading button')].every(button => { const r = button.getBoundingClientRect(); return Math.abs(r.width - r.height) < .01 })`)
     assert(squares, 'Keep timeline icon buttons square')
     assert.equal(await exec('getComputedStyle(document.documentElement).getPropertyValue("--accent").trim().toLowerCase()'), '#173e76')
