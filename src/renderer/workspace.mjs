@@ -1764,7 +1764,9 @@ function showTabsMenu(side) {
   tabsMenu.style.left = '0px'
   tabsMenu.style.top = '0px'
   tabsMenu.showPopover()
-  placePopover(tabsMenu, side === 'left' ? box.left : box.right - tabsMenu.offsetWidth, box.bottom + 4)
+  const place = () => placePopover(tabsMenu, side === 'left' ? box.left : box.right - tabsMenu.offsetWidth, box.bottom + 4)
+  place()
+  requestAnimationFrame(place)
 }
 function revealTab(name) {
   const button = $(name + '-tab')
