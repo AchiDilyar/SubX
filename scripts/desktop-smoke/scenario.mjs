@@ -220,6 +220,7 @@ async function run() {
     assert.deepEqual(nativeEdit.submenu.items.map(item => item.label), ['撤销', '重做'], 'Keep only undo and redo in the native edit menu')
   }
   if (process.env.SUBX_SCREENSHOT_PATH) await captureScreenshot(process.env.SUBX_SCREENSHOT_PATH)
+  assert(await exec('!document.querySelector("#empty-actions").hidden && !document.querySelector("#empty-timeline").hidden'), 'Show first-run actions and the empty timeline hint')
   await click('menu-file')
   await expect('!document.querySelector("#menu-file-popup").hidden && document.querySelector("#menu-file").getAttribute("aria-expanded") === "true"', 'open the file menu with icon items')
   assert.deepEqual(await exec('[...document.querySelectorAll("#menu-file-popup button")].map(button => button.id)'), ['new-project', 'open-project', 'recent-projects', 'save-project', 'save-project-as', 'menu-open-media', 'blank-video', 'import-subtitles', 'import-script', 'menu-quit'], 'List the file commands in order')
@@ -239,6 +240,12 @@ async function run() {
   await expect('document.querySelectorAll("#shortcuts-dialog kbd").length >= 10 && document.querySelector("#shortcuts-dialog").textContent.includes("Space")', 'show shortcut keys as keycaps')
   await exec('document.querySelector("#shortcuts-dialog button").click()')
   await expect('!document.querySelector("#shortcuts-dialog").open && document.querySelector("#menu-about-popup").hidden', 'close the shortcuts window and its menu')
+  await exec('document.querySelector("#styles-tab").focus({ preventScroll: true })')
+  for (const type of ['rawKeyDown', 'keyUp']) {
+    await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type, key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 })
+  }
+  await expect('document.activeElement.id === "settings-tab" && document.querySelector("#settings-tab").getAttribute("aria-selected") === "true"', 'move between inspector tabs with the keyboard')
+  await click('styles-tab')
   assert(await exec('document.querySelector("#open-media").closest(".monitor") === null'), 'Remove the open-video button from the preview panel')
   assert.equal(await exec('document.querySelector("#split-tool use").getAttribute("href")'), '#i-razor', 'Use a razor icon for the razor tool')
   for (const id of ['play', 'fullscreen-preview']) {
@@ -296,7 +303,8 @@ async function run() {
     await click('waveform-mode')
 
     await captureScreenshot(process.env.SUBX_ICON_SCREENSHOT_PATH || '/private/tmp/subx-icons-check.png')
-    const squares = await exec(`[...document.querySelectorAll('.timeline-controls button, .toolrail button, .heading-actions button, .track-heading button')].every(button => { const r = button.getBoundingClientRect(); return Math.abs(r.width - r.height) < .01 })`)
+    // #next-review 是带文字的状态按钮，不参与图标按钮的正方形检查。
+    const squares = await exec(`[...document.querySelectorAll('.timeline-controls button:not(#next-review), .toolrail button, .heading-actions button, .track-heading button')].every(button => { const r = button.getBoundingClientRect(); return Math.abs(r.width - r.height) < .01 })`)
     assert(squares, 'Keep timeline icon buttons square')
     assert.equal(await exec('getComputedStyle(document.documentElement).getPropertyValue("--accent").trim().toLowerCase()'), '#173e76')
     await click('fullscreen-preview')
@@ -400,9 +408,12 @@ async function run() {
     await exec(`document.querySelector(${JSON.stringify(selector)}).focus({ preventScroll: true })`)
     await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...space })
     await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...space })
-    await expect(`getComputedStyle(document.querySelector(${JSON.stringify(selector)})).outlineStyle === 'none' &&
-      getComputedStyle(document.querySelector('.timeline')).borderTopColor === 'rgb(51, 51, 51)'`,
-      'keep ' + selector + ' and the panel free of focus frames after Space')
+    // 标尺与缩放条现在有键盘焦点环；按空格仍然播放/暂停，但不能改变面板边框。
+    await expect(`(() => {
+      const style = getComputedStyle(document.querySelector(${JSON.stringify(selector)}))
+      return style.outlineStyle === 'solid' && parseFloat(style.outlineWidth) >= 2 &&
+        getComputedStyle(document.querySelector('.timeline')).borderTopColor === 'rgb(51, 51, 51)'
+    })()`, 'show a keyboard focus ring on ' + selector + ' after Space')
   }
   const sparseAss = baseAss.replace('Dialogue: 0,0:00:01.00', 'Dialogue: 5,0:00:01.00')
     .replace('Dialogue: 0,0:00:01.50', 'Dialogue: 7,0:00:01.50')
@@ -559,7 +570,8 @@ async function run() {
     await expect('document.querySelector("#status").textContent === "已更新字幕正文"', 'save cue text')
   }
   await addCue('第一条字幕')
-  await expect('document.querySelector(".cue.selected").classList.contains("playing") && getComputedStyle(document.querySelector(".cue.selected")).color === "rgb(255, 196, 107)" && getComputedStyle(document.querySelector(".cue.selected")).backgroundColor === "rgb(168, 98, 26)"', 'highlight the cue under the playhead without changing its base fill')
+  await expect('document.querySelector(".cue.selected").classList.contains("playing") && getComputedStyle(document.querySelector(".cue.selected")).color === "rgb(255, 255, 255)" && getComputedStyle(document.querySelector(".cue.selected")).backgroundColor === "rgb(168, 98, 26)"', 'highlight the cue under the playhead without changing its base fill')
+  assert(await exec('!document.querySelector("#cue-meta").hidden && document.querySelector("#cue-meta-duration").textContent.includes("秒") && document.querySelector("#cue-meta-cps").textContent.includes("字/秒")'), 'Show cue duration and reading speed')
   assert.equal(Math.round(await exec('document.querySelector(".cue").getBoundingClientRect().height')), 32, 'Match the cue visual height to the track height')
   assert.equal(Math.round(await exec('document.querySelector(".track-lane").getBoundingClientRect().height')), 32, 'Keep the single-lane track height at 32 pixels')
   assert.equal(await exec('document.querySelector(".cue")?.textContent'), '第一条字幕')
@@ -728,6 +740,7 @@ async function run() {
   const originalMediaUrl = await exec('document.querySelector("video").src')
   await click('open-media')
   await expect('!document.querySelector("#open-media").disabled && document.querySelector("#status").textContent.includes("无法播放")', 'report an unreadable replacement video')
+  assert.equal(await exec('document.querySelector("#status").dataset.tone'), 'error', 'Mark an unreadable video as an error status')
   assert.deepEqual(await exec(`(() => {
     const video = document.querySelector('video')
     return [video.src, video.currentTime, document.querySelector('#media-name').textContent]
@@ -1914,7 +1927,8 @@ async function run() {
     return point
   }
   await toggleBottom()
-  assert.equal(await exec('getComputedStyle(document.querySelector(".track-lane:last-child .cue")).opacity'), '0.3', 'Dim the subtitle blocks of a hidden track')
+  // 隐藏轨道的字幕块仍要可辨认，透明度从 .3 提高到 .55。
+  assert.equal(await exec('getComputedStyle(document.querySelector(".track-lane:last-child .cue")).opacity'), '0.55', 'Dim the subtitle blocks of a hidden track')
   const hiddenEdge = await startEdge()
   await expect(`document.querySelector(${JSON.stringify(topCue)}).dataset.range.includes('00:00:01.170') && document.querySelector('#snap-guide')?.hidden !== false`, 'ignore a hidden track while snapping an edge')
   assert(await exec(`parseFloat(document.querySelector(${JSON.stringify(topCue)}).style.width) > 1`), 'Keep the dragged block at its real width instead of collapsing to 1px')

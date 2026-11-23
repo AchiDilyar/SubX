@@ -123,6 +123,16 @@
           <div id="empty-video" class="empty-video">
             <img class="empty-wordmark" src="../assets/textLOGO.png" alt="SubX">
             <span id="empty-video-message" hidden></span>
+            <div id="empty-actions" class="empty-actions">
+              <p id="empty-actions-title" class="empty-actions-title">开始制作字幕</p>
+              <p id="empty-actions-hint" class="empty-actions-hint">打开视频，或直接导入 SRT / ASS 字幕；也可以先用空白视频练习打轴。</p>
+              <div class="empty-actions-row">
+                <button id="empty-open-media" class="primary" type="button"><svg class="icon" aria-hidden="true"><use href="#i-film"></use></svg><span>打开视频…</span></button>
+                <button id="empty-import-subtitles" type="button"><svg class="icon" aria-hidden="true"><use href="#i-import"></use></svg><span>导入字幕…</span></button>
+                <button id="empty-blank-video" type="button"><svg class="icon" aria-hidden="true"><use href="#i-monitor"></use></svg><span>添加空白视频…</span></button>
+                <button id="empty-open-project" type="button"><svg class="icon" aria-hidden="true"><use href="#i-folder"></use></svg><span>打开工程…</span></button>
+              </div>
+            </div>
           </div>
         </div>
         <div class="preview-progress"><input id="preview-progress" type="range" min="0" max="1000" value="0" step="1" aria-label="视频进度" disabled></div>
@@ -203,6 +213,12 @@
               <label>结束时间<input id="cue-end" placeholder="00:00:00.000" required></label>
             </div>
             <label>样式<select id="cue-style"></select></label>
+            <div id="cue-meta" class="cue-meta" hidden>
+              <span class="cue-meta-item"><span class="cue-meta-label">轨道</span><span id="cue-meta-track">—</span></span>
+              <span class="cue-meta-item"><span class="cue-meta-label">时长</span><span id="cue-meta-duration">—</span></span>
+              <span class="cue-meta-item"><span class="cue-meta-label">语速</span><span id="cue-meta-cps">—</span></span>
+              <span class="cue-meta-item"><span class="cue-meta-label">链接</span><span id="cue-meta-link">—</span></span>
+            </div>
             <button id="complete-review" type="button" hidden>标为已校对</button>
             <div class="dialog-actions"><button id="delete-cue" type="button">删除字幕</button><button class="discard-draft" type="button" hidden>取消修改</button><button type="submit" class="primary">应用修改</button></div>
           </form>
@@ -225,6 +241,9 @@
           <button id="toggle-marker" title="添加 / 删除标记" aria-label="添加标记"><svg class="icon" aria-hidden="true"><use href="#i-marker"></use></svg></button>
           <span id="drag-overlap" hidden>同轨字幕重叠</span>
         </div>
+        <div class="timeline-review" role="group" aria-label="校对">
+          <button id="next-review" type="button" title="定位下一条待校对字幕" aria-label="定位下一条待校对字幕" hidden>待校对 0</button>
+        </div>
         <div class="timeline-states" aria-label="时间轴状态切换">
           <button id="snap-tool" title="自动吸附" aria-label="自动吸附" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-snap"></use></svg></button>
           <button id="waveform-mode" title="波形：对称" aria-label="波形显示模式"><svg class="icon" aria-hidden="true"><use href="#i-wave-symmetric"></use></svg></button>
@@ -237,7 +256,7 @@
           <button id="select-forward" title="向前选中" aria-label="向前选中" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-select-forward"></use></svg></button>
           <button id="select-backward" title="向后选中" aria-label="向后选中" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-select-backward"></use></svg></button>
         </nav>
-        <div class="tool-stash" hidden><button id="open-media">打开视频</button><button id="delete-track" title="删除轨道" aria-label="删除轨道"><svg class="icon" aria-hidden="true"><use href="#i-remove-track"></use></svg></button><button id="next-review" title="定位下一条待校对字幕"></button></div>
+        <div class="tool-stash" hidden><button id="open-media">打开视频</button><button id="delete-track" title="删除轨道" aria-label="删除轨道"><svg class="icon" aria-hidden="true"><use href="#i-remove-track"></use></svg></button></div>
         <div id="timeline-scroll" class="timeline-scroll">
           <div id="timeline-content" class="timeline-content">
             <div class="track-headings" id="track-headings"></div>
@@ -250,7 +269,11 @@
               <div id="selection-box" class="selection-box" aria-hidden="true" hidden></div>
             </div>
           </div>
-          <p id="empty-timeline" class="empty-timeline">添加字幕块，或导入 SRT / ASS。</p>
+          <div id="empty-timeline" class="empty-timeline" hidden>
+            <strong>还没有字幕</strong>
+            <span>导入 SRT / ASS，或点击工具栏的「添加字幕块」。</span>
+            <button id="empty-import" type="button"><svg class="icon" aria-hidden="true"><use href="#i-import"></use></svg>导入字幕…</button>
+          </div>
         </div>
       </div>
       <div class="timeline-footer">
@@ -267,7 +290,7 @@
       </div>
     </section>
   </main>
-  <footer><span id="status" role="status">就绪</span><span id="project-stats">0 条轨道 · 0 条字幕</span></footer>
+  <footer><span id="status" role="status" aria-atomic="true" data-tone="info">就绪</span><span id="project-stats">0 条轨道 · 0 条字幕</span></footer>
   <div id="timeline-menu" class="menu-popup" role="menu" aria-label="时间轴操作" popover="auto"></div>
   <div id="tabs-menu" class="menu-popup tabs-menu" role="menu" aria-label="其他标签" popover="auto"></div>
   <div id="cue-style-menu" class="menu-popup tabs-menu" role="menu" aria-label="设置样式" popover="auto"></div>
@@ -311,8 +334,8 @@
       </div>
     </form>
   </dialog>
-  <dialog id="recent-dialog">
-    <form method="dialog"><h2>最近工程</h2><div id="recent-list"></div><div class="dialog-actions"><button>关闭</button></div></form>
+  <dialog id="recent-dialog" aria-labelledby="recent-title">
+    <form method="dialog"><h2 id="recent-title">最近工程</h2><div id="recent-list"></div><div class="dialog-actions"><button>关闭</button></div></form>
   </dialog>
   <dialog id="srt-import-dialog" aria-labelledby="srt-import-title" aria-describedby="srt-import-summary">
     <form method="dialog">

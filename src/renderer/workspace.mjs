@@ -54,6 +54,8 @@ let dragFrame = 0
 let rows = []
 let reviewCues = []
 let mediaDuration = 0
+// none：没有媒体；missing：工程引用的视频找不到；error：视频无法解码。
+let mediaState = 'none'
 let frameTimes
 let frameGap = Infinity
 let rulerFrame
@@ -165,8 +167,15 @@ function expandBindings(ids) {
 }
 const styleName = style => field(style.fields, 'Name').trim()
 
-function status(message) {
-  $('status').textContent = message
+// 状态栏按语义着色：成功（已…）、警告（重叠/请先…）、错误（异常与失败）分开表达。
+function status(message, tone) {
+  const node = $('status')
+  const text = String(message ?? '')
+  // 警告词优先于“已…”的成功推断，避免“已保存，但仍有未保存修改”被误判为成功。
+  const level = tone ?? (/(重叠|请先|注意|尚未|未保存|不可用|无法播放)/.test(text) ? 'warn'
+    : /^已/.test(text) ? 'success' : 'info')
+  node.textContent = text
+  node.dataset.tone = level
 }
 // 主进程抛出的错误会带 Electron 的 IPC 前缀，展示前统一去掉。
 function errorText(error) {
@@ -243,7 +252,7 @@ function action(id, callback) {
     try {
       await callback()
     } catch (error) {
-      status(errorText(error))
+      status(errorText(error), 'error')
     }
   })
 }
@@ -494,12 +503,14 @@ function attachVideo(reference) {
   $('media-name').title = label || missingPath || ''
   $('empty-video-message').textContent = missingPath ? '原视频不可用' : ''
   $('empty-video-message').hidden = !missingPath
+  mediaState = reference ? 'loading' : missingPath ? 'missing' : 'none'
   $('open-media').textContent = missingPath ? '重新定位视频' : '打开视频'
   $('play').disabled = true
   video.pause()
   video.hidden = true
   canvas.hidden = true
   $('empty-video').hidden = Boolean(solid)
+  updateEmptyState()
   video.removeAttribute('src')
   if (reference) video.src = reference.url
   if (!solid) video.load()
@@ -523,6 +534,39 @@ function attachVideo(reference) {
   fitPicture()
   updatePreview()
 }
+
+// 空工作区与缺失媒体时的引导：保留居中的品牌字标，操作卡固定在预览底部。
+const emptyActionIds = ['empty-open-media', 'empty-import-subtitles', 'empty-blank-video', 'empty-open-project']
+function updateEmptyState() {
+  const box = $('empty-video')
+  if (!box) return
+  const loading = mediaState === 'loading'
+  $('empty-actions').hidden = loading
+  if (loading) return
+  const missing = mediaState === 'missing'
+  const broken = mediaState === 'error'
+  $('empty-actions-title').textContent = broken ? '重新选择视频' : missing ? '重新定位视频' : '开始制作字幕'
+  $('empty-actions-hint').textContent = broken
+    ? '请重新选择可解码的视频（H.264 / AAC MP4 最稳妥），字幕轨道仍可继续编辑。'
+    : missing
+      ? '重新定位视频后即可继续预览；字幕轨道仍可编辑，保存工程会记住新位置。'
+      : '打开视频，或直接导入 SRT / ASS 字幕；也可以先用空白视频练习打轴。'
+  $('empty-open-media').querySelector('span').textContent = broken ? '重新选择视频…' : missing ? '重新定位视频…' : '打开视频…'
+  for (const id of emptyActionIds) $(id).hidden = false
+  // 与菜单按钮的禁用状态保持一致，项目操作进行中不留下可点但无反应的入口。
+  $('empty-open-media').disabled = $('open-media').disabled
+  $('empty-import-subtitles').disabled = $('import-subtitles').disabled
+  $('empty-blank-video').disabled = $('blank-video').disabled
+  $('empty-open-project').disabled = $('open-project').disabled
+  $('empty-blank-video').hidden = missing || broken
+  $('empty-open-project').hidden = missing || broken
+}
+
+action('empty-open-media', () => $('open-media').click())
+action('empty-import-subtitles', () => $('import-subtitles').click())
+action('empty-blank-video', () => $('blank-video').click())
+action('empty-open-project', () => $('open-project').click())
+action('empty-import', () => $('import-subtitles').click())
 
 function fitPicture() {
   const ar = isSolid() ? solidMedia.width / solidMedia.height :
@@ -562,6 +606,7 @@ const assPreview = createAssPreview($('ass-overlays'), status, updatePreview)
 let previewStyles = project.styles
 let readStylePreview
 let previewDraftKey = ''
+let stylePreviewFrame = 0
 let previewCueText
 let cuePreviewFrame = 0
 let lastCaptionKey = ''
@@ -1002,13 +1047,15 @@ function render() {
   }
   $('track-headings').replaceChildren(spacer, headings, headingResizer)
   $('track-lanes').replaceChildren(...lanes)
-  $('empty-timeline').hidden = rows.length > 0
+  const cueTotal = rows.reduce((sum, row) => sum + row.ordered.length, 0)
+  $('empty-timeline').hidden = cueTotal > 0
   $('project-stats').textContent = rows.length + ' 条轨道 · ' +
     rows.reduce((sum, row) => sum + row.ordered.length, 0) + ' 条字幕'
   $('undo').disabled = !undo.length
   $('redo').disabled = !redo.length
   refreshTrackControls()
   renderCueForm()
+  updateEmptyState()
   updateProjectTitle()
   renderViewport()
   renderStyleList(true)
@@ -1594,6 +1641,10 @@ function endDrag(pointer, commit) {
 }
 
 function switchTab(tab, preview = true) {
+  // 标签组使用 roving tabindex：只有当前标签在 Tab 序列里，方向键在标签间移动。
+  for (const name of ['styles', 'settings', 'cue', 'script']) {
+    $(name + '-tab').tabIndex = tab === name ? 0 : -1
+  }
   if ($(tab + '-tab').getAttribute('aria-selected') === 'true') return
   if (punch && tab !== 'script') finishPunch()
   for (const name of ['styles', 'settings', 'cue', 'script']) {
@@ -1666,6 +1717,21 @@ function revealTab(name) {
 }
 tabsMoreLeft.addEventListener('click', () => showTabsMenu('left'))
 tabsMoreRight.addEventListener('click', () => showTabsMenu('right'))
+tabsScroll.addEventListener('keydown', event => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  const buttons = visibleTabButtons()
+  const current = buttons.indexOf(document.activeElement)
+  if (current < 0) return
+  event.preventDefault()
+  const next = event.key === 'Home' ? 0
+    : event.key === 'End' ? buttons.length - 1
+      : (current + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length
+  const target = buttons[next]
+  switchTab(target.id.replace(/-tab$/, ''))
+  target.focus({ preventScroll: true })
+  // 显式阻止冒泡，避免标签方向键同时触发全局播放头快捷键。
+  event.stopPropagation()
+})
 tabsScroll.addEventListener('scroll', updateTabPages, { passive: true })
 new ResizeObserver(updateTabPages).observe(tabsScroll)
 
@@ -1694,11 +1760,43 @@ function bindDraft(form, drafts, id, rerender) {
   }
 }
 
+// 选中字幕的即时信息：轨道、时长、语速（去除空白与 ASS 标签后的字数/秒）和链接状态。
+function cuePlainText(text) {
+  return String(text ?? '').replace(/\{[^}]*\}/g, '').replace(/\\N/gi, '\n')
+}
+function cueStats(cue, values = {}) {
+  const start = Number.isSafeInteger(values.start) ? values.start : cue.start
+  const end = Number.isSafeInteger(values.end) ? values.end : cue.end
+  const text = cuePlainText(values.text ?? cue.text)
+  const duration = Math.max(0, end - start)
+  const chars = text.replace(/\s+/g, '').length
+  return { duration, cps: duration ? chars / (duration / 1000) : 0, chars }
+}
+function updateCueMeta(cue, values) {
+  const meta = $('cue-meta')
+  if (!meta || !cue) return
+  const { duration, cps, chars } = cueStats(cue, values)
+  const owner = trackFor(cue.id)
+  const linked = (project.links ?? []).some(pair => pair.includes(cue.id))
+  const bound = Boolean(bindingGroupOf(cue.id))
+  $('cue-meta-track').textContent = owner ? trackLabel(owner) : '—'
+  $('cue-meta-duration').textContent = (duration / 1000).toFixed(2) + ' 秒'
+  $('cue-meta-cps').textContent = cps.toFixed(1) + ' 字/秒 · ' + chars + ' 字'
+  const warn = duration < 1000 || cps > 17
+  $('cue-meta-cps').classList.toggle('warn', warn)
+  $('cue-meta-cps').title = warn
+    ? (cps > 17 ? '语速超过 17 字/秒，观众可能读不完。' : '时长不足 1 秒，可能来不及阅读。')
+    : '按去除空白与 ASS 标签后的正文字数计算。'
+  $('cue-meta-link').textContent = linked ? '已链接' : bound ? '成组' : '未链接'
+  $('cue-meta-link').classList.toggle('linked', linked || bound)
+}
+
 function renderCueForm() {
   inspectorForms.delete($('cue-form'))
   const cue = findCue(project, selected)
   $('cue-form').hidden = !cue
   $('empty-cue').hidden = Boolean(cue)
+  $('cue-meta').hidden = !cue
   $('complete-review').hidden = !cue?.splitNeedsReview
   if (!cue) return
   const locked = Boolean(trackFor(cue.id)?.locked)
@@ -1707,7 +1805,7 @@ function renderCueForm() {
   $('cue-text').placeholder = trackFor(cue.id)?.ass || cue.assText ? '支持 ASS 覆盖标签' : ''
   $('cue-start').value = printTime(cue.start, '.')
   $('cue-end').value = printTime(cue.end, '.')
-  const choices = [new Option('默认', '')]
+  const choices = [new Option('项目默认样式', '')]
   for (const style of project.styles) {
     if (style.trackId === undefined || style.trackId === trackFor(cue.id)?.id) {
       choices.push(new Option(styleName(style), style.id))
@@ -1718,6 +1816,11 @@ function renderCueForm() {
   bindDraft($('cue-form'), cueDrafts, cue.id, () => {
     renderCueForm()
     refreshInspectorPreview()
+  })
+  updateCueMeta(cue, {
+    start: readTime($('cue-start').value),
+    end: readTime($('cue-end').value),
+    text: $('cue-text').value,
   })
 }
 
@@ -1879,8 +1982,25 @@ function applyStylePreview(style) {
   node.style.fontStyle = Number(property('Italic')) ? 'italic' : 'normal'
   node.style.textDecoration = [Number(property('Underline')) && 'underline', Number(property('StrikeOut')) && 'line-through'].filter(Boolean).join(' ')
   node.style.letterSpacing = (Number(property('Spacing')) || 0) * .4 + 'px'
-  node.style.transform = 'rotate(' + -(Number(property('Angle')) || 0) + 'deg) scale(' +
-    (Number(property('ScaleX')) || 100) / 100 + ', ' + (Number(property('ScaleY')) || 100) / 100 + ')'
+  const rotation = -(Number(property('Angle')) || 0)
+  const scaleX = (Number(property('ScaleX')) || 100) / 100
+  const scaleY = (Number(property('ScaleY')) || 100) / 100
+  // 预览文字按面板宽度等比缩小；ScaleX/ScaleY 也计入，避免放大样式被右侧裁掉。
+  const fit = () => {
+    const box = node.parentElement
+    if (!node.isConnected || !box) return
+    const available = Math.max(48, box.clientWidth - 16)
+    const natural = node.scrollWidth
+    const ratio = natural > 0 && scaleX > 0 ? Math.min(1, available / (natural * scaleX)) : 1
+    node.style.transform = 'rotate(' + rotation + 'deg) scale(' + scaleX * ratio + ', ' + scaleY * ratio + ')'
+  }
+  fit()
+  cancelAnimationFrame(stylePreviewFrame)
+  stylePreviewFrame = requestAnimationFrame(fit)
+  document.fonts?.ready?.then(() => {
+    cancelAnimationFrame(stylePreviewFrame)
+    stylePreviewFrame = requestAnimationFrame(fit)
+  })?.catch(() => {})
 }
 
 function refreshInspectorPreview(projectChanged = false) {
@@ -2353,7 +2473,7 @@ blankVideoDialog.addEventListener('close', () => {
     updateProjectTitle()
     attachVideo(null)
     status('已添加空白视频 · ' + media.width + '×' + media.height + ' · ' + media.fps + ' fps')
-  }).catch(error => status(errorText(error)))
+  }).catch(error => status(errorText(error), 'error'))
 })
 
 // —— 文稿打轴 ——
@@ -2457,7 +2577,7 @@ scriptDialog.addEventListener('close', () => {
     switchTab('script')
     renderScriptPanel()
     status('已导入 ' + lines.length + ' 行文稿' + (missing ? ' · ' + missing + ' 行缺译文' : ''))
-  }).catch(error => status(errorText(error)))
+  }).catch(error => status(errorText(error), 'error'))
 })
 action('script-tab', () => switchTab('script'))
 function playheadNow() {
@@ -2574,7 +2694,8 @@ async function withProjectOperation(callback) {
   if (projectBusy) return
   projectBusy = true
   const controls = ['new-project', 'open-project', 'recent-projects', 'save-project',
-    'save-project-as', 'open-media', 'blank-video', 'import-subtitles', 'import-script', 'script-import']
+    'save-project-as', 'open-media', 'blank-video', 'import-subtitles', 'import-script', 'script-import',
+    'empty-open-media', 'empty-import-subtitles', 'empty-blank-video', 'empty-open-project']
   for (const id of controls) $(id).disabled = true
   try {
     await callback()
@@ -2622,7 +2743,7 @@ action('new-project', () => changeProject(() => {
   reset(newWorkspaceProject(), null)
   status('已新建工程')
 }))
-action('open-project', () => changeProject(async () => openResult(await app.openProject())).catch(error => status(errorText(error))))
+action('open-project', () => changeProject(async () => openResult(await app.openProject())).catch(error => status(errorText(error), 'error')))
 function recentTimeLabel(openedAt) {
   if (!Number.isFinite(openedAt) || openedAt <= 0) return ''
   const date = new Date(openedAt)
@@ -2658,7 +2779,7 @@ action('recent-projects', () => withProjectOperation(async () => {
     button.append(text, element('span', 'recent-item-time', recentTimeLabel(openedAt)))
     button.addEventListener('click', () => {
       dialog.close()
-      changeProject(async () => openResult(await app.openProject(file))).catch(error => status(errorText(error)))
+      changeProject(async () => openResult(await app.openProject(file))).catch(error => status(errorText(error), 'error'))
     })
     return button
   })
@@ -2745,7 +2866,7 @@ async function saveThenClose() {
   if (closeNeedsConfirmation()) {
     suppressClosePrompt()
     app.cancelClose()
-    status('工程已保存，但仍有尚未保存的修改')
+    status('工程已保存，但仍有尚未保存的修改', 'warn')
     showQuitDialog()
     return
   }
@@ -2778,7 +2899,7 @@ quitDialog.addEventListener('close', () => setQuitDialogBusy(false))
 
 // 访达双击工程文件：和「最近工程」走同一条打开路径，未保存内容仍会先询问。
 app.onOpenPath?.(path => {
-  changeProject(async () => openResult(await app.openProjectPath(path))).catch(error => status(errorText(error)))
+  changeProject(async () => openResult(await app.openProjectPath(path))).catch(error => status(errorText(error), 'error'))
 })
 
 app.onCloseRequest(() => {
@@ -2882,7 +3003,7 @@ $('export-format').addEventListener('close', async () => {
   const current = exportSelection
   exportSelection = undefined
   if (!['srt', 'ass'].includes(format) || !current || switchingProject) return
-  try { await exportTrack(current, format) } catch (error) { status(errorText(error)) }
+  try { await exportTrack(current, format) } catch (error) { status(errorText(error), 'error') }
 })
 action('add-track', () => edit(() => {
   const next = addTopTrack(project.tracks)
@@ -3542,6 +3663,19 @@ action('trim-end', () => trimSelectedToPlayhead('end'))
 action('timeline-delete', () => deleteSelectedCue())
 action('toggle-marker', toggleMarker)
 
+// 编辑开始/结束时间或正文时，实时刷新时长与语速提示。
+for (const id of ['cue-text', 'cue-start', 'cue-end']) {
+  $(id).addEventListener('input', () => {
+    const cue = findCue(project, selected)
+    if (!cue) return
+    updateCueMeta(cue, {
+      start: readTime($('cue-start').value),
+      end: readTime($('cue-end').value),
+      text: $('cue-text').value,
+    })
+  })
+}
+
 $('cue-form').addEventListener('submit', event => {
   event.preventDefault()
   const cue = findCue(project, selected)
@@ -3673,9 +3807,11 @@ video.addEventListener('error', () => {
   $('empty-video-message').textContent = '视频无法播放'
   $('empty-video-message').hidden = false
   $('empty-video').hidden = false
+  mediaState = 'error'
+  updateEmptyState()
   video.hidden = true
   canvas.hidden = true
-  status('无法播放此视频。请检查文件或尝试 H.264/AAC MP4。')
+  status('无法播放此视频。请检查文件或尝试 H.264/AAC MP4。', 'error')
 })
 video.addEventListener('seeking', () => {
   if (isSolid()) return
@@ -4343,7 +4479,7 @@ function setWatermarkImage(patch) {
   }
 }
 $('watermark-choose').addEventListener('click', async () => {
-  const picked = await app.chooseWatermark().catch(error => { status(errorText(error)); return null })
+  const picked = await app.chooseWatermark().catch(error => { status(errorText(error), 'error'); return null })
   if (!picked) return
   watermarkCache = { path: picked.path, url: picked.dataUrl, tried: true }
   edit(() => {
