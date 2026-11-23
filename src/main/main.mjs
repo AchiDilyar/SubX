@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, protocol, shell } from 'electron'
 import { constants, createReadStream } from 'node:fs'
-import { access, chmod, lstat, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { access, chmod, lstat, mkdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { basename, dirname, extname, join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -312,6 +312,90 @@ async function initialize() {
     persistRecent = persistRecent.catch(() => {}).then(() => writeAtomically(recentFile, snapshot))
     return persistRecent.catch(error => console.warn('Could not save recent projects:', error.message))
   }
+  const autosaveDirectory = join(app.getPath('userData'), 'autosave')
+  const autosaveFile = join(autosaveDirectory, 'current.json')
+  let autosaveQueue = Promise.resolve()
+  function queueAutosave(task) {
+    const next = autosaveQueue.catch(() => {}).then(task)
+    autosaveQueue = next.catch(() => {})
+    return next
+  }
+  function sanitizeDrafts(drafts) {
+    const pairs = value => Array.isArray(value)
+      ? value.filter(item => Array.isArray(item) && typeof item[0] === 'string' && Array.isArray(item[1]) &&
+          item[1].every(change => Array.isArray(change) && Number.isInteger(change[0]) && typeof change[1] === 'string'))
+        .map(([id, changes]) => [id, changes])
+      : []
+    const editor = drafts?.editor && typeof drafts.editor.cueId === 'string' && typeof drafts.editor.text === 'string'
+      ? { cueId: drafts.editor.cueId, text: drafts.editor.text.slice(0, 20000) }
+      : null
+    return { cues: pairs(drafts?.cues), styles: pairs(drafts?.styles), editor }
+  }
+  function parseAutosave(text) {
+    if (typeof text !== 'string' || !text) return null
+    try {
+      const data = JSON.parse(text)
+      if (!data || typeof data !== 'object' || data.version !== 1) return null
+      validateProject(data.project)
+      return {
+        savedAt: Number.isFinite(data.savedAt) ? data.savedAt : 0,
+        documentName: typeof data.documentName === 'string' ? data.documentName : '',
+        documentPath: typeof data.documentPath === 'string' ? data.documentPath : null,
+        project: data.project,
+        drafts: sanitizeDrafts(data.drafts),
+      }
+    } catch {
+      return null
+    }
+  }
+  bind('autosave:write', (window, payload) => {
+    if (!payload || typeof payload !== 'object' || !payload.project) throw new Error('无效的自动保存内容')
+    validateProject(payload.project)
+    const document = documents.get(window)
+    const text = JSON.stringify({
+      version: 1,
+      savedAt: Date.now(),
+      documentName: document?.handle.name ?? '未命名工程',
+      documentPath: document?.file ?? null,
+      project: payload.project,
+      drafts: sanitizeDrafts(payload.drafts),
+    })
+    if (Buffer.byteLength(text, 'utf8') > 32 * 1024 * 1024) throw new Error('工程过大，暂未自动保存')
+    return queueAutosave(async () => {
+      await mkdir(autosaveDirectory, { recursive: true })
+      await writeAtomically(autosaveFile, text)
+      await chmod(autosaveFile, 0o600).catch(() => {})
+      return true
+    })
+  })
+  bind('autosave:info', async () => {
+    const data = parseAutosave(await readText(autosaveFile).catch(() => ''))
+    return data ? { savedAt: data.savedAt, documentName: data.documentName, documentPath: data.documentPath } : null
+  })
+  bind('autosave:restore', async window => {
+    const data = parseAutosave(await readText(autosaveFile).catch(() => ''))
+    if (!data) return null
+    const session = mediaSessions.get(window)
+    const media = typeof data.project.media === 'string'
+      ? await mediaReference(data.project.media, window, session)
+      : null
+    if (window.isDestroyed() || mediaSessions.get(window) !== session) return null
+    releaseMedia(pendingMedia, window)
+    setActiveMedia(window, media?.token)
+    return {
+      project: data.project,
+      media,
+      drafts: data.drafts,
+      documentName: data.documentName,
+      documentPath: data.documentPath,
+      savedAt: data.savedAt,
+    }
+  })
+  bind('autosave:clear', () => queueAutosave(async () => {
+    await unlink(autosaveFile).catch(() => {})
+    return true
+  }))
+
   bind('media:choose', async window => {
     const session = mediaSessions.get(window)
     const file = await selectFile(window, '视频', [...mediaTypes.keys()].map(extension => extension.slice(1)))

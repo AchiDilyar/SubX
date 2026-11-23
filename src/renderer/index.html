@@ -349,6 +349,15 @@
       <div class="dialog-actions"><button value="cancel">取消</button><button class="primary" value="confirm">确认拆分</button></div>
     </form>
   </dialog>
+  <dialog id="recover-dialog" aria-labelledby="recover-title" aria-describedby="recover-message">
+    <h2 id="recover-title">恢复未保存的工程？</h2>
+    <p id="recover-message" class="muted"></p>
+    <p id="recover-error" class="cue-editor-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button id="recover-discard" type="button">丢弃</button>
+      <button id="recover-restore" class="primary" type="button">恢复</button>
+    </div>
+  </dialog>
   <dialog id="shift-dialog" aria-labelledby="shift-title" aria-describedby="shift-description">
     <form id="shift-form">
       <h2 id="shift-title">整体平移</h2>

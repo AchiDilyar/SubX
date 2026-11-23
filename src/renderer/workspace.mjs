@@ -71,9 +71,11 @@ let solidStartTime = 0
 let scriptIndex = 0
 let punch = null
 let projectDocument = null
+let projectDisplayName = ''
 let projectBusy = false
 let switchingProject = false
 let projectSavePending = false
+let watermarkCache = { path: '', url: '', tried: false }
 let revision = Symbol()
 let savedVersion = { revision, media: project.media }
 const dirty = () => revision !== savedVersion.revision || project.media !== savedVersion.media
@@ -83,6 +85,26 @@ const inspectorForms = new WeakMap()
 const hasPendingForm = () => cueDrafts.size > 0 || styleDrafts.size > 0
 const undo = []
 const redo = []
+const UNDO_LIMIT = 70
+const UNDO_BYTES = 48 * 1024 * 1024
+let undoBytes = 0
+let redoBytes = 0
+function projectBytes(value) {
+  try { return JSON.stringify(value).length * 2 } catch { return 0 }
+}
+function trimHistory(stack) {
+  // 至少保留最近一步；单个超大快照也不至于让本次编辑完全不可撤销。
+  while (stack.length > 1 && (stack.length > UNDO_LIMIT || (stack === undo ? undoBytes : redoBytes) > UNDO_BYTES)) {
+    const removed = stack.shift()
+    if (stack === undo) undoBytes -= removed.bytes ?? 0
+    else redoBytes -= removed.bytes ?? 0
+  }
+}
+let autosaveTimer = 0
+let autosaveWrite = null
+let autosaveQueued = false
+let autosaveErrorShown = false
+let pendingEditorDraft = null
 const width = timeMs => timeMs * pixelsPerSecond / 1000
 const deltaFor = px => Math.round(px * 1000 / pixelsPerSecond)
 // 标尺刻度按帧率取档：帧、秒、分逐级放大；标签在有帧率时显示「时:分:秒.帧」。
@@ -417,20 +439,30 @@ action('menu-homepage', () => app.openExternal('https://github.com/AchiDilyar/Su
 
 function edit(change) {
   const before = { project: structuredClone(project), revision }
+  before.bytes = projectBytes(before.project)
   change()
   undo.push(before)
-  if (undo.length > 70) undo.shift()
+  undoBytes += before.bytes
+  trimHistory(undo)
   redo.length = 0
+  redoBytes = 0
   revision = Symbol()
   render()
+  scheduleAutosave()
 }
 
 function restore(source, destination) {
   endDrag(drag?.pointer, false)
   if (!source.length) return
-  destination.push({ project, revision })
   const media = project.media
   const entry = source.pop()
+  if (source === undo) undoBytes -= entry.bytes ?? 0
+  else redoBytes -= entry.bytes ?? 0
+  const snapshot = { project, revision, bytes: projectBytes(project) }
+  destination.push(snapshot)
+  if (destination === undo) undoBytes += snapshot.bytes
+  else redoBytes += snapshot.bytes
+  trimHistory(destination)
   project = entry.project
   revision = entry.revision
   // Video selection is independent of subtitle undo and redo.
@@ -439,6 +471,7 @@ function restore(source, destination) {
   render()
   // 撤销/重做会整体替换工程对象，旧查找结果必须按新工程重新解析。
   if (!findPanel.hidden) runFind({ reset: false })
+  scheduleAutosave()
 }
 
 function ensureSelection() {
@@ -454,6 +487,10 @@ function ensureSelection() {
 }
 
 function reset(next, media, documentHandle = null) {
+  clearTimeout(autosaveTimer)
+  autosaveTimer = 0
+  pendingEditorDraft = null
+  projectDisplayName = ''
   projectDocument = documentHandle
   cueDrafts.clear()
   styleDrafts.clear()
@@ -469,6 +506,8 @@ function reset(next, media, documentHandle = null) {
   savedVersion = { revision, media: project.media }
   undo.length = 0
   redo.length = 0
+  undoBytes = 0
+  redoBytes = 0
   ensureSelection()
   $('cue-tab').hidden = true
   closeFindPanel()
@@ -1397,6 +1436,7 @@ function toggleTrackLock(owner) {
   }
   render()
   status((owner.locked ? '已锁定「' : '已解锁「') + trackLabel(owner) + '」')
+  scheduleAutosave()
 }
 
 function pick(track, cue, keepGroup = false) {
@@ -1750,6 +1790,7 @@ function recordDraft(form) {
   if (changes.size) drafts.set(id, changes)
   else drafts.delete(id)
   form.querySelector('.discard-draft').hidden = !changes.size
+  scheduleAutosave()
 }
 
 function bindDraft(form, drafts, id, rerender) {
@@ -1761,6 +1802,7 @@ function bindDraft(form, drafts, id, rerender) {
     drafts.delete(id)
     rerender()
     updateProjectTitle()
+    scheduleAutosave()
   }
 }
 
@@ -2353,6 +2395,7 @@ action('open-media', () => withProjectOperation(async () => {
   updateProjectTitle()
   attachVideo(reference)
   status('已打开视频')
+  scheduleAutosave()
 }))
 
 // —— 空白视频选项 ——
@@ -2477,6 +2520,7 @@ blankVideoDialog.addEventListener('close', () => {
     updateProjectTitle()
     attachVideo(null)
     status('已添加空白视频 · ' + media.width + '×' + media.height + ' · ' + media.fps + ' fps')
+    scheduleAutosave()
   }).catch(error => status(errorText(error), 'error'))
 })
 
@@ -3084,6 +3128,7 @@ function finishPunch() {
   scriptIndex = nextScriptIndex(active.lineIndex + 1)
   render()
   status('第 ' + (active.lineIndex + 1) + ' 行已打轴 · ' + printTime(aligned.start, '.') + ' – ' + printTime(aligned.end, '.'))
+  scheduleAutosave()
   return aligned.end
 }
 function cancelPunch() {
@@ -3092,24 +3137,28 @@ function cancelPunch() {
   punch = null
   const entry = undo.pop()
   if (entry) {
+    undoBytes -= entry.bytes ?? 0
     project = entry.project
     revision = entry.revision
     redo.length = 0
+    redoBytes = 0
     ensureSelection()
   }
   scriptIndex = active.lineIndex
   render()
   status('已取消第 ' + (active.lineIndex + 1) + ' 行打轴')
+  scheduleAutosave()
 }
 window.addEventListener('keyup', event => {
   if (punch && event.key === punch.key) finishPunch()
 })
 window.addEventListener('blur', () => { if (punch) finishPunch() })
 function updateProjectTitle() {
-  const name = projectDocument?.name ?? '未命名工程'
+  const name = projectDocument?.name ?? (projectDisplayName || '未命名工程')
   const modified = dirty() || hasPendingForm()
   $('save-project').title = name + (modified ? '（有未保存修改）' : '')
-  document.title = projectDocument ? name + (modified ? ' ●' : '') + ' · SubX' : 'SubX'
+  const titled = Boolean(projectDocument || projectDisplayName)
+  document.title = titled ? name + (modified ? ' ●' : '') + ' · SubX' : 'SubX'
 }
 
 async function withProjectOperation(callback) {
@@ -3152,6 +3201,8 @@ function changeProject(callback) {
       if (dirty() || hasPendingForm()) {
         const choice = await askBeforeChangingProject()
         if (choice === 'cancel' || (choice === 'save' && !await writeCurrentProject(false))) return
+        // 用户明确放弃旧工程的修改时才清理旧自动保存；保存成功由 writeCurrentProject 清理。
+        if (choice === 'discard') clearAutosave()
       }
       await callback()
     } finally {
@@ -3225,6 +3276,7 @@ async function writeCurrentProject(saveAs) {
       projectDocument = result
       savedVersion = saving
       updateProjectTitle()
+      if (!dirty() && !hasPendingForm() && !currentEditorDraft()) clearAutosave()
       status(dirty() || hasPendingForm() ? '已写入工程，仍有尚未保存的修改' : '已保存工程')
     }
   } finally {
@@ -3233,6 +3285,142 @@ async function writeCurrentProject(saveAs) {
   }
   return saved && !closing
 }
+
+// —— 自动保存与崩溃恢复 ——
+function serializeDrafts(drafts) {
+  return [...drafts].map(([id, changes]) => [id, [...changes]])
+}
+function currentEditorDraft() {
+  if (!editorOpen() || editorText.value === initialEditorText) return null
+  return editorCue ? { cueId: editorCue, text: editorText.value } : null
+}
+function clearAutosave() {
+  clearTimeout(autosaveTimer)
+  autosaveTimer = 0
+  autosaveQueued = false
+  void app.autosaveClear().catch(() => {})
+}
+async function flushAutosave() {
+  autosaveTimer = 0
+  if (switchingProject || projectBusy) {
+    scheduleAutosave()
+    return
+  }
+  const editorDraft = currentEditorDraft()
+  if (!dirty() && !hasPendingForm() && !editorDraft) {
+    clearAutosave()
+    return
+  }
+  if (autosaveWrite) {
+    autosaveQueued = true
+    return
+  }
+  const payload = {
+    project: structuredClone(project),
+    drafts: {
+      cues: serializeDrafts(cueDrafts),
+      styles: serializeDrafts(styleDrafts),
+      editor: editorDraft,
+    },
+  }
+  autosaveWrite = app.autosaveWrite(payload)
+    .then(() => { autosaveErrorShown = false })
+    .catch(error => {
+      console.warn('Could not write autosave:', error?.message ?? error)
+      if (!autosaveErrorShown) {
+        autosaveErrorShown = true
+        status('自动保存失败：' + errorText(error), 'warn')
+      }
+    })
+    .finally(() => { autosaveWrite = null })
+  await autosaveWrite
+  if (autosaveQueued) {
+    autosaveQueued = false
+    scheduleAutosave()
+  }
+}
+function scheduleAutosave() {
+  if (switchingProject) return
+  clearTimeout(autosaveTimer)
+  // 回到已保存状态时立即清理，避免 5 秒内退出留下一个用户已撤销的自动保存。
+  if (!dirty() && !hasPendingForm() && !currentEditorDraft()) {
+    autosaveTimer = 0
+    clearAutosave()
+    return
+  }
+  autosaveTimer = setTimeout(() => { void flushAutosave() }, 5000)
+}
+function restoreDrafts(drafts) {
+  for (const [id, changes] of drafts?.cues ?? []) {
+    if (findCue(project, id)) cueDrafts.set(id, new Map(changes))
+  }
+  for (const [id, changes] of drafts?.styles ?? []) {
+    if (styleFor(id)) styleDrafts.set(id, new Map(changes))
+  }
+  pendingEditorDraft = drafts?.editor && typeof drafts.editor.cueId === 'string' ? drafts.editor : null
+}
+function applyPendingEditorDraft() {
+  const draft = pendingEditorDraft
+  pendingEditorDraft = null
+  if (!draft) return
+  const cue = findCue(project, draft.cueId)
+  const owner = cue && trackFor(cue.id)
+  if (!cue || !owner || owner.locked) return
+  if (linkMode) setLinkMode(false)
+  pick(owner, cue)
+  openCueEditor(owner, cue)
+  if (editorOpen()) {
+    editorText.value = draft.text
+    updateEditorCount()
+  }
+}
+const recoverDialog = $('recover-dialog')
+async function initializeAutosave() {
+  const info = await app.autosaveInfo().catch(() => null)
+  if (!info) return
+  const when = info.savedAt ? new Date(info.savedAt).toLocaleString('zh-CN', { hour12: false }) : ''
+  const name = info.documentName && info.documentName !== '未命名工程' ? '（' + info.documentName + '）' : ''
+  $('recover-message').textContent = '发现 ' + (when ? when + ' ' : '') + '的自动保存' + name +
+    '。恢复后可继续编辑；保存时请另存为。'
+  $('recover-error').hidden = true
+  recoverDialog.showModal()
+  $('recover-restore').focus({ preventScroll: true })
+}
+recoverDialog.addEventListener('cancel', event => event.preventDefault())
+$('recover-restore').addEventListener('click', async () => {
+  $('recover-restore').disabled = true
+  $('recover-discard').disabled = true
+  $('recover-error').hidden = true
+  try {
+    const result = await app.autosaveRestore()
+    if (!result) throw new Error('自动保存已损坏，无法恢复。')
+    reset(result.project, result.media, null)
+    projectDisplayName = result.documentName ? result.documentName + '（恢复）' : '恢复的工程'
+    restoreDrafts(result.drafts)
+    savedVersion = { revision: Symbol(), media: project.media }
+    updateProjectTitle()
+    render()
+    applyPendingEditorDraft()
+    recoverDialog.close()
+    status('已恢复自动保存的工程，请另存为', 'warn')
+    scheduleAutosave()
+  } catch (error) {
+    $('recover-error').textContent = errorText(error)
+    $('recover-error').hidden = false
+  } finally {
+    $('recover-restore').disabled = false
+    $('recover-discard').disabled = false
+  }
+})
+$('recover-discard').addEventListener('click', async () => {
+  $('recover-restore').disabled = true
+  $('recover-discard').disabled = true
+  await app.autosaveClear().catch(() => {})
+  recoverDialog.close()
+  $('recover-restore').disabled = false
+  $('recover-discard').disabled = false
+  status('已丢弃自动保存')
+})
 
 const quitDialog = $('quit-dialog')
 let allowWindowClose = false
@@ -3296,9 +3484,12 @@ async function saveThenClose() {
   app.allowClose()
 }
 
-function discardThenClose() {
+async function discardThenClose() {
   if (!quitDialog.open) return
   hideQuitDialog()
+  await app.autosaveClear().catch(() => {})
+  clearTimeout(autosaveTimer)
+  autosaveTimer = 0
   allowWindowClose = true
   app.allowClose()
 }
@@ -3311,7 +3502,7 @@ function cancelClosing() {
 
 setQuitDialogBusy(false)
 $('quit-save').addEventListener('click', () => { void saveThenClose() })
-$('quit-discard').addEventListener('click', discardThenClose)
+$('quit-discard').addEventListener('click', () => { void discardThenClose() })
 $('quit-cancel').addEventListener('click', cancelClosing)
 quitDialog.addEventListener('cancel', event => {
   event.preventDefault()
@@ -3524,6 +3715,7 @@ function closeCueEditor(focus = true) {
   editorError.hidden = true
   editorCue = undefined
   if (focus && cue !== undefined && findCue(project, cue)) focusTimelineCue(cue)
+  scheduleAutosave()
 }
 
 function saveCueEditor() {
@@ -3558,6 +3750,7 @@ $('editor-cancel').addEventListener('click', () => closeCueEditor())
 editorText.addEventListener('input', () => {
   editorError.hidden = true
   updateEditorCount()
+  scheduleAutosave()
 })
 editorText.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !event.isComposing) {
@@ -4832,6 +5025,7 @@ connectDivider('vertical-divider', false)
 $('play').disabled = true
 ensureSelection()
 render()
+setTimeout(() => { void initializeAutosave() }, 300)
 
 bindComposition({
   project: () => project,
@@ -4850,7 +5044,6 @@ bindComposition({
 })
 
 // ---- 视频水印：图片选择、位置/尺寸/透明度与预览叠加 ----
-let watermarkCache = { path: '', url: '', tried: false }
 function watermarkImageSettings() {
   const settings = project.settings
   const image = settings?.watermarkImage
