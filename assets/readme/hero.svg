@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-labelledby="heroTitle heroDesc">
+  <title id="heroTitle">SubX — 多轨字幕编辑器</title>
+  <desc id="heroDesc">深色时间轴界面示意：两条字幕轨道、橙色字幕块与红色播放头，配 SubX 字标与简介。</desc>
+  <defs>
+    <linearGradient id="panelShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d1d1d"/>
+      <stop offset="1" stop-color="#171717"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="320" rx="18" fill="#101010"/>
+  <rect x="0.5" y="0.5" width="1199" height="319" rx="18" fill="none" stroke="#2c2c2c"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <text x="72" y="82" fill="#8f959d" font-size="18" font-weight="600" letter-spacing="3.2">DESKTOP SUBTITLE EDITOR</text>
+    <text x="70" y="176" fill="#f2f4f7" font-size="96" font-weight="760" letter-spacing="-2">Sub<tspan fill="#f4a447">X</tspan></text>
+    <text x="74" y="226" fill="#e2e2e2" font-size="26" font-weight="600">多轨字幕编辑器</text>
+    <text x="74" y="262" fill="#abafb6" font-size="18" font-weight="500" letter-spacing="0.6">时间轴 · 双语校对 · 样式 · 视频合成</text>
+  </g>
+
+  <g>
+    <rect x="696" y="58" width="432" height="204" rx="12" fill="url(#panelShade)" stroke="#333333"/>
+    <rect x="696" y="58" width="432" height="32" rx="12" fill="#202020"/>
+    <rect x="696" y="78" width="432" height="12" fill="#202020"/>
+    <circle cx="716" cy="74" r="4" fill="#ff5f57"/>
+    <circle cx="730" cy="74" r="4" fill="#febc2e"/>
+    <circle cx="744" cy="74" r="4" fill="#28c840"/>
+
+    <line x1="716" y1="108" x2="1108" y2="108" stroke="#3a3a3a"/>
+    <g stroke="#5b6068">
+      <line x1="716" y1="108" x2="716" y2="114"/>
+      <line x1="756" y1="108" x2="756" y2="112"/>
+      <line x1="796" y1="108" x2="796" y2="114"/>
+      <line x1="836" y1="108" x2="836" y2="112"/>
+      <line x1="876" y1="108" x2="876" y2="114"/>
+      <line x1="916" y1="108" x2="916" y2="112"/>
+      <line x1="956" y1="108" x2="956" y2="114"/>
+      <line x1="996" y1="108" x2="996" y2="112"/>
+      <line x1="1036" y1="108" x2="1036" y2="114"/>
+      <line x1="1076" y1="108" x2="1076" y2="112"/>
+    </g>
+
+    <rect x="712" y="126" width="400" height="30" rx="6" fill="#151515"/>
+    <rect x="712" y="166" width="400" height="30" rx="6" fill="#151515"/>
+
+    <g fill="#a8621a" stroke="#f4a447" stroke-opacity="0.55" stroke-width="1">
+      <rect x="724" y="131" width="84" height="20" rx="4"/>
+      <rect x="818" y="131" width="58" height="20" rx="4"/>
+      <rect x="886" y="131" width="104" height="20" rx="4"/>
+      <rect x="1000" y="131" width="72" height="20" rx="4"/>
+      <rect x="724" y="171" width="64" height="20" rx="4"/>
+      <rect x="798" y="171" width="96" height="20" rx="4"/>
+      <rect x="904" y="171" width="56" height="20" rx="4"/>
+      <rect x="970" y="171" width="86" height="20" rx="4"/>
+    </g>
+
+    <line x1="892" y1="96" x2="892" y2="202" stroke="#ff3b30" stroke-width="1.5"/>
+    <path d="M885 96h14l-7 9z" fill="#e6e8ea"/>
+
+    <text x="712" y="224" fill="#d7dade" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18" font-weight="500">在时间轴上编排字幕</text>
+    <text x="712" y="250" fill="#7d838b" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="14" letter-spacing="1">2 TRACKS · 10 CUES · 00:00:06.14</text>
+  </g>
+</svg>

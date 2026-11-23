@@ -9,3 +9,8 @@ Thumbs.db
 /resources/ffmpeg.exe
 /resources/ffprobe
 /resources/ffprobe.exe
+
+# 本地规划、Agent 说明与设计素材，不随源码发布
+/PLAN.md
+/AGENTS.md
+/design/
