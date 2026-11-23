@@ -5,6 +5,7 @@ import { assStyleResetCues, assTextCues, captureCue, pasteCue, groupAssLayers, i
 import { findMergePartner, mergedExportText, mergeTracks } from '../core/merge.mjs'
 import { analyzeProject, extendShortCues, fixTrailingSpaces, qcSettings, splitLongCues } from '../core/qc.mjs'
 import { TEXT_TOOL_LABELS, transformCueTexts } from '../core/text-tools.mjs'
+import { inspectVtt, writeVtt } from '../core/vtt.mjs'
 import { findTextMatches, replaceTextAt, replaceTextMatches } from '../core/text.mjs'
 
 import { assLayers, bindComposition, fadeOf } from './composition.mjs'
@@ -3719,7 +3720,8 @@ action('import-subtitles', () => withProjectOperation(async () => {
   const file = await app.chooseSubtitles()
   if (!file) return
   const ass = file.extension === '.ass' ? readAss(file.text) : null
-  const { cues, issues = [] } = ass ?? inspectSrt(file.text)
+  const vtt = file.extension === '.vtt' ? inspectVtt(file.text) : null
+  const { cues, issues = [] } = ass ?? vtt ?? inspectSrt(file.text)
   if (issues.length && !await confirmSubtitleImport(file.name, cues.length, issues)) return
   if (!cues.length) {
     status(`${file.name} 没有可导入的字幕。`)
@@ -3786,22 +3788,22 @@ action('export-subtitles', () => {
   }
   dialog.returnValue = 'cancel'
   $('ass-export-note').hidden = !current.ass
-  dialog.querySelector('button[value="srt"]').disabled = !current.cues.length
+  for (const value of ['srt', 'vtt']) dialog.querySelector('button[value="' + value + '"]').disabled = !current.cues.length
   dialog.showModal()
   dialog.querySelector(`button[value="${current.ass ? 'ass' : 'srt'}"]`).focus()
 })
 async function exportTrack(current, format) {
-  const cues = format === 'srt'
-    ? assTextCues(current, !current.ass)
-    : current.cues
+  const cues = format === 'ass' ? current.cues : assTextCues(current, !current.ass)
   const skipped = current.cues.length - cues.length
   const summary = skipped ? ' · 跳过 ' + skipped + ' 条无正文事件' : ''
-  if (format === 'srt' && !cues.length) {
+  if (format !== 'ass' && !cues.length) {
     status('此轨道没有可导出的字幕正文' + summary)
     return
   }
   const layer = current.ass && !current.ass.indexed ? undefined : trackIndex(project.tracks, current)
-  const text = format === 'ass' ? writeAss(current, project.styles, fadeOf(project.settings), layer) : writeSrt(cues)
+  const text = format === 'ass'
+    ? writeAss(current, project.styles, fadeOf(project.settings), layer)
+    : format === 'vtt' ? writeVtt(cues) : writeSrt(cues)
   if (await app.exportSubtitles({ name: trackLabel(current), format, text })) {
     status('已导出 ' + format.toUpperCase() + summary)
   }
@@ -3827,7 +3829,7 @@ $('export-format').addEventListener('close', async () => {
   exportPartner = undefined
   $('export-merge-row').hidden = true
   $('export-merge-preview').hidden = true
-  if (!['srt', 'ass'].includes(format) || !current || switchingProject) return
+  if (!['srt', 'ass', 'vtt'].includes(format) || !current || switchingProject) return
   try {
     if (merge) await exportMergedTrack(current, partner, format)
     else await exportTrack(current, format)

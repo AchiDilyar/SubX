@@ -13,7 +13,7 @@ const entry = 'subx://app/renderer/index.html'
 const appFiles = new Set([
   '/renderer/index.html', '/renderer/workspace.css', '/renderer/workspace.mjs',
   '/renderer/composition.mjs', '/renderer/ass-preview.mjs', '/assets/NotoSansSC.ttf', '/assets/SubXIcon.png', '/assets/textLOGO.png', '/assets/about-qr.svg',
-  '/core/project.mjs', '/core/srt.mjs', '/core/ass.mjs', '/core/frame-grid.mjs', '/core/text.mjs', '/core/merge.mjs', '/core/qc.mjs', '/core/text-tools.mjs',
+  '/core/project.mjs', '/core/srt.mjs', '/core/ass.mjs', '/core/frame-grid.mjs', '/core/text.mjs', '/core/merge.mjs', '/core/qc.mjs', '/core/text-tools.mjs', '/core/vtt.mjs',
 ])
 const iconFiles = ["new", "folder", "recent", "save", "copy", "import", "export", "film", "monitor", "sliders", "style", "plus", "play", "pause", "undo", "redo", "track", "cue", "split", "select", "link", "snap", "eye", "eye-off", "info", "arrow", "pencil", "back", "trash", "power", "check", "keyboard", "external", "close", "lock", "expand", "collapse", "razor", "blade", "select-forward", "select-backward", "trim-start", "trim-end", "marker", "remove-track", "wave-symmetric", "wave-asymmetric", "wave-off", "unlock"].map(name => '/assets/icons/' + name + '.png')
 for (const path of iconFiles) appFiles.add(path)
@@ -424,7 +424,7 @@ async function initialize() {
     if (first === 0xfe && second === 0xff) encoding = 'utf-16be'
     return { name: basename(file), extension: extname(file).toLowerCase(), text: decodeText(contents, file, encoding) }
   }
-  bind('subtitles:choose', window => chooseText(window, '字幕', ['srt', 'ass']))
+  bind('subtitles:choose', window => chooseText(window, '字幕', ['srt', 'ass', 'vtt']))
   async function readImageFile(file) {
     const info = await stat(file)
     if (!info.isFile()) throw new Error('请选择一张图片作为水印。')
@@ -620,7 +620,7 @@ async function initialize() {
   bind('video:cancel', window => { compositions.get(window)?.controller.abort() })
   bind('subtitles:export', async (window, data) => {
     const { name, text, format } = data
-    if (!['srt', 'ass'].includes(format) || typeof text !== 'string' || typeof name !== 'string') {
+    if (!['srt', 'ass', 'vtt'].includes(format) || typeof text !== 'string' || typeof name !== 'string') {
       throw new Error('无效的导出内容')
     }
     const title = name.replace(/[\\/:*?"<>|]/g, '_')

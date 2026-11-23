@@ -59,6 +59,9 @@ test('exports merged SRT and ASS text', () => {
   assert.match(ass.text, /\[Events\]/)
   assert.match(ass.text, /Dialogue: .*上轨一\\Nlower one/)
   assert.match(ass.text, /PlayResX: 1920/)
+  const vtt = mergedExportText(project, upper, lower, 'vtt')
+  assert.match(vtt.text, /^WEBVTT\n\n/)
+  assert.match(vtt.text, /上轨一\nlower one/)
 })
 
 test('preserves literal SRT braces and escapes them only for ASS', () => {

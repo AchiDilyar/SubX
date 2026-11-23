@@ -3,6 +3,7 @@
 
 import { assSafeCueText, plainCueText, renderAss } from './ass.mjs'
 import { writeSrt } from './srt.mjs'
+import { writeVtt } from './vtt.mjs'
 
 export function findMergePartner(project, track) {
   if (!track) return null
@@ -93,11 +94,12 @@ export function mergeTracks(project, current, partner, { textMode = 'raw' } = {}
 
 // 生成可直接交给保存对话框的 SRT / ASS 文本。
 export function mergedExportText(project, current, partner, format, { fade = false } = {}) {
-  const textMode = format === 'srt' ? 'srt' : format === 'ass' ? 'ass' : null
+  const textMode = format === 'ass' ? 'ass' : (format === 'srt' || format === 'vtt') ? 'srt' : null
   if (!textMode) throw new Error('不支持的导出格式')
   const merged = mergeTracks(project, current, partner, { textMode })
   if (!merged.cues.length) throw new Error('合并结果没有可导出的字幕')
   if (format === 'srt') return { ...merged, text: writeSrt(merged.cues) }
+  if (format === 'vtt') return { ...merged, text: writeVtt(merged.cues) }
   const defaultStyle = project.styles.find(style => style.isProjectDefault)
   // 分辨率优先取上轨；上轨是纯文本时用下轨 ASS 的 PlayRes，避免下轨覆盖标签坐标错位。
   const assSource = merged.upper.ass ?? merged.lower.ass
