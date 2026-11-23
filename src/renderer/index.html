@@ -441,6 +441,11 @@
     <form method="dialog">
       <h2 id="export-title">导出字幕</h2>
       <p class="dialog-description" id="export-track-summary"></p>
+      <label id="export-merge-row" class="export-merge-row" hidden>
+        <input id="export-merge" type="checkbox">
+        <span class="settings-text"><strong>合并上下轨为双行字幕</strong><small id="export-merge-summary"></small></span>
+      </label>
+      <p id="export-merge-preview" class="muted" hidden></p>
       <div class="format-options">
         <button value="srt"><strong>SRT</strong><span>时间码与多行正文</span><svg class="icon" aria-hidden="true"><use href="#i-arrow"></use></svg></button>
         <button value="ass"><strong>ASS</strong><span>保留字幕样式与定位</span><svg class="icon" aria-hidden="true"><use href="#i-arrow"></use></svg></button>

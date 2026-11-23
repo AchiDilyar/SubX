@@ -340,11 +340,32 @@ function plainDialogue(text, scriptWrap) {
   return output.split('\n').filter(line => line.trim()).join('\n')
 }
 
-export function assTextCues(track, mixed = false) {
-  const wrap = scriptInfo(track.ass).reduce((value, line) => {
+const wrapCache = new WeakMap()
+function scriptWrap(track) {
+  const source = track?.ass
+  if (!source) return 0
+  const cached = wrapCache.get(source)
+  if (cached !== undefined) return cached
+  const wrap = scriptInfo(source).reduce((value, line) => {
     const match = /^\s*WrapStyle:\s*([0-3])\s*$/i.exec(line)
     return match ? Number(match[1]) : value
   }, 0)
+  wrapCache.set(source, wrap)
+  return wrap
+}
+
+export function plainCueText(track, cue) {
+  return track.ass || cue.assText ? plainDialogue(cue.text, scriptWrap(track)) : cue.text
+}
+
+export function assSafeCueText(track, cue) {
+  if (track.ass || cue.assText) return cue.text
+  // SRT escape sequences and literal braces have no override semantics in ASS.
+  return cue.text.replace(/\\(?=[Nnh{}])/g, '\\\u200b').replace(/[{}]/g, '\\$&')
+}
+
+export function assTextCues(track, mixed = false) {
+  const wrap = scriptWrap(track)
   return track.cues.map(cue => ({ ...cue, text: !mixed || cue.assText ? plainDialogue(cue.text, wrap) : cue.text })).filter(cue => cue.text.trim())
 }
 

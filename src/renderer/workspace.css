@@ -447,6 +447,11 @@ dialog .dialog-actions button.primary:hover:not(:disabled) { background: var(--a
 #blank-video-dialog { width: 470px; overflow: visible; }
 #shift-dialog { width: 440px; }
 #recover-dialog { width: 440px; }
+#export-merge-row { display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: var(--radius-control); background: #1f1f1f; cursor: pointer; }
+#export-merge-row input { margin-top: 2px; }
+#export-merge-row .settings-text { display: grid; gap: 2px; }
+#export-merge-row small { color: var(--muted); font-size: var(--text-xs); line-height: 1.45; }
+#export-merge-preview { margin: 0; max-height: 80px; overflow: auto; font-size: var(--text-xs); line-height: 1.5; white-space: pre-wrap; }
 #recover-message { margin: 0; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
 #shift-summary { margin: 0; min-height: 1.4em; color: var(--muted); line-height: 1.55; overflow-wrap: anywhere; }
 #shift-dialog .dialog-description { margin: 0; color: var(--muted); line-height: 1.55; }

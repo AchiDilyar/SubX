@@ -2,6 +2,7 @@ import { createProject, createSolidMedia, createTrack, addTopTrack, isSolidMedia
 import { alignCue, frameBoundaries, nearestBoundary } from '../core/frame-grid.mjs'
 import { inspectSrt, printTime, readTime, writeSrt } from '../core/srt.mjs'
 import { assStyleResetCues, assTextCues, captureCue, pasteCue, groupAssLayers, importAssLayers, moveCuesToTrack, fallbackAssStyle, field, newStyle, readAss, renameAssStyleReset, setField, writeAss } from '../core/ass.mjs'
+import { findMergePartner, mergedExportText, mergeTracks } from '../core/merge.mjs'
 import { findTextMatches, replaceTextAt, replaceTextMatches } from '../core/text.mjs'
 
 import { assLayers, bindComposition, fadeOf } from './composition.mjs'
@@ -3578,6 +3579,26 @@ action('import-subtitles', () => withProjectOperation(async () => {
   status('已导入 ' + cues.length + ' 条字幕' + (issues.length ? ` · 跳过 ${issues.length} 条` : ''))
 }))
 let exportSelection
+let exportPartner
+function updateExportMergePreview() {
+  const preview = $('export-merge-preview')
+  if (!$('export-merge').checked || !exportPartner || !exportSelection) {
+    preview.hidden = true
+    preview.textContent = ''
+    return
+  }
+  try {
+    const merged = mergeTracks(project, exportSelection, exportPartner)
+    preview.textContent = '示例：' + merged.preview + ' · ' + merged.pairs + ' 对链接' +
+      (merged.singles ? ' · ' + merged.singles + ' 条单边' : '') +
+      (merged.emptyOverlap ? ' · ' + merged.emptyOverlap + ' 对无重叠，按上轨时间' : '')
+    preview.hidden = false
+  } catch (error) {
+    preview.textContent = errorText(error)
+    preview.hidden = false
+  }
+}
+$('export-merge').addEventListener('change', updateExportMergePreview)
 action('export-subtitles', () => {
   if (switchingProject) return
   const current = track()
@@ -3588,7 +3609,16 @@ action('export-subtitles', () => {
     return
   }
   exportSelection = current
+  const partnerInfo = findMergePartner(project, current)
+  exportPartner = partnerInfo?.partner
   $('export-track-summary').textContent = trackLabel(current) + ' · ' + current.cues.length + ' 条字幕'
+  $('export-merge-row').hidden = !partnerInfo
+  $('export-merge').checked = false
+  $('export-merge-preview').hidden = true
+  $('export-merge-preview').textContent = ''
+  if (partnerInfo) {
+    $('export-merge-summary').textContent = '检测到与 ' + trackLabel(partnerInfo.partner) + ' 的 ' + partnerInfo.count + ' 对链接字幕'
+  }
   dialog.returnValue = 'cancel'
   $('ass-export-note').hidden = !current.ass
   dialog.querySelector('button[value="srt"]').disabled = !current.cues.length
@@ -3611,12 +3641,32 @@ async function exportTrack(current, format) {
     status('已导出 ' + format.toUpperCase() + summary)
   }
 }
+async function exportMergedTrack(current, partner, format) {
+  const merged = mergedExportText(project, current, partner, format, { fade: fadeOf(project.settings) })
+  const name = trackLabel(merged.upper) + ' + ' + trackLabel(merged.lower) + ' 合并'
+  if (!await app.exportSubtitles({ name, format, text: merged.text })) return
+  const extras = [
+    merged.pairs + ' 对链接',
+    merged.singles ? merged.singles + ' 条单边' : '',
+    merged.emptyOverlap ? merged.emptyOverlap + ' 对无重叠按上轨时间' : '',
+    merged.skipped ? '跳过 ' + merged.skipped + ' 条空正文' : '',
+  ].filter(Boolean).join(' · ')
+  status('已导出 ' + format.toUpperCase() + ' · ' + extras)
+}
 $('export-format').addEventListener('close', async () => {
   const format = $('export-format').returnValue
   const current = exportSelection
+  const partner = exportPartner
+  const merge = $('export-merge').checked && Boolean(partner)
   exportSelection = undefined
+  exportPartner = undefined
+  $('export-merge-row').hidden = true
+  $('export-merge-preview').hidden = true
   if (!['srt', 'ass'].includes(format) || !current || switchingProject) return
-  try { await exportTrack(current, format) } catch (error) { status(errorText(error), 'error') }
+  try {
+    if (merge) await exportMergedTrack(current, partner, format)
+    else await exportTrack(current, format)
+  } catch (error) { status(errorText(error), 'error') }
 })
 action('add-track', () => edit(() => {
   const next = addTopTrack(project.tracks)
