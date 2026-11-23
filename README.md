@@ -54,6 +54,7 @@ npm run fetch:ffmpeg
 
 ```bash
 npm run package   # 输出到 out/
+npm run make -- --platform=win32 --arch=x64   # Windows 安装程序
 ```
 
 ## 开发

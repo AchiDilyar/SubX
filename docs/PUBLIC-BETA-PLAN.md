@@ -4,7 +4,7 @@
 - 文档定位：面向“能交给真实字幕制作者使用”的第一个公测版本，给出范围、顺序、验收标准与发布清单。
 - 产品主文档：`PLAN.md`（本地，不随源码发布）。本文与 `PLAN.md` 冲突处见 §12。
 - UI 审计：`docs/UI-UX-AUDIT.md`
-- 当前基线：`0.1.0-dev.1`，SRT/ASS 多轨编辑闭环已跑通，66 个单测 + 381 条桌面 PASS 通过。
+- 当前基线：`0.1.0-dev.1`，SRT/ASS 多轨编辑闭环已跑通，69 个单测 + 381 条桌面 PASS 通过。
 - 说明：文中行号以 2026-11-23 当前工作区为准；后续改动若行号漂移，以函数名、选择器名与验收标准为准。
 
 ## 1. 公测定义与完成标准
@@ -53,7 +53,7 @@
 | 空白视频、J/K 打轴、工程保存/重开 | 已实现 | 桌面 smoke 覆盖 |
 | 字幕导出、合成视频（H.264/HEVC、纯色源） | 已实现 | `src/main/video-export.mjs` |
 | 深色工作区、四标签、全部弹窗、快捷键 | 已实现 | 本轮截图审计 |
-| 单元测试 / 桌面回归 | 66 / 381 条通过 | `npm test`、`npm run test:desktop` |
+| 单元测试 / 桌面回归 | 69 / 381 条通过 | `npm test`、`npm run test:desktop` |
 
 ### 2.2 关键缺口（公测前必须补齐）
 
@@ -131,13 +131,13 @@
 - 改动面：新增 `src/core/merge.mjs`、`workspace.mjs`（导出流程）、`index.html`（导出对话框）、`main.mjs`（批量导出 IPC）、`test/`、桌面 smoke。
 - 工作量：M；风险：中（产品规则需拍板）。
 
-### P0-5 Windows 发布链路
+### P0-5 Windows 发布链路（第 10 轮实现，实机验收待做）
 
 - 用户可见行为：Windows 安装后无需自备 FFmpeg 即可合成视频；安装/卸载/文件关联/合成全流程可用。
 - 验收标准：
-  - [ ] 干净 Windows 环境安装后，空白视频合成 H.264 成功。
-  - [ ] 安装包包含 `ffmpeg.exe/ffprobe.exe`；`.subx` 双击可打开。
-  - [ ] 卸载无残留；`scripts/desktop-smoke/windows-installer.ps1` 在 CI 常规执行。
+  - [ ] 干净 Windows 环境安装后，空白视频合成 H.264 成功（需要 Windows 实机/CI）。
+  - [x] 安装包包含 `ffmpeg.exe/ffprobe.exe`；`.subx` 双击可打开（下载脚本、extraResource、HKCU 关联与安装脚本检查已就绪）。
+  - [~] 卸载清理关联与安装目录；`windows-installer.ps1` 已增加关联/FFmpeg 检查，CI `make_installers` 执行，Windows 实机结果待记录。
 - 改动面：`scripts/fetch-ffmpeg.mjs`（win32-x64 源 + SHA256）、`forge.config.cjs`（extraResource）、`.github/workflows/desktop.yml`、`windows-installer.ps1`、`README.md`。
 - 工作量：M–L；风险：高（外部二进制、签名、干净机）。
 
@@ -369,7 +369,7 @@
 - 崩溃恢复：启动时发现自动保存则弹出「恢复未保存的工程？」；恢复后工程标记未保存、标题显示「（恢复）●」，保存时走另存为；选择丢弃或正常保存后清理文件。
 - 撤销内存上限：全量快照栈保留 70 步上限，同时按约 48MB 估算裁剪；撤销/重做/取消打轴同步维护字节计数。
 - 手工验证：编辑后 6.5 秒生成 autosave；SIGKILL 主进程后重启恢复 cue 表单草稿与内联编辑器草稿；保存和退出丢弃后 autosave 消失。
-- 验证：66 个单测、381 条桌面 PASS（含撤销/重做、保存、退出丢弃路径）。
+- 验证：69 个单测、381 条桌面 PASS（含撤销/重做、保存、退出丢弃路径）。
 
 #### 第 2 轮完成记录（2026-11-23）
 
@@ -377,7 +377,7 @@
 - 整体平移：按时间/按帧、当前轨道/选中/全部轨道；负值按最早起点整体钳制（保持相对时间与链接时间差）；按帧模式整帧偏移，按时间模式严格毫秒；跨轨链接提示；一次撤销。
 - 查找替换：非模态浮层，当前轨道/全部/选中、大小写/正则/忽略 ASS 标签、命中计数与逐条定位、替换当前/全部、一次撤销。
 - 新增 `src/core/text.mjs` 与 `test/text.test.mjs`、`test/timing.test.mjs`；桌面 smoke 覆盖菜单、对话框、⌘F、替换与撤销。
-- 验证：66 个单测、381 条桌面 PASS；桌面 smoke 覆盖菜单、对话框、⌘F、当前/选中/跨轨范围、替换与撤销。
+- 验证：69 个单测、381 条桌面 PASS；桌面 smoke 覆盖菜单、对话框、⌘F、当前/选中/跨轨范围、替换与撤销。
 
 ### M2 专业字幕能力
 
@@ -392,21 +392,21 @@
 - 导出对话框新增编码/换行选择；单轨与合并导出都生效；状态栏显示非默认选项。
 - SSA `[V4 Styles]` 可导入样式与事件；新增 `test/ssa.test.mjs`。
 - 桌面 smoke 覆盖 GBK SRT 导入、GB18030+CRLF 导出。
-- 验证：66 个单测、381 条桌面 PASS。
+- 验证：69 个单测、381 条桌面 PASS。
 
 #### 第 7 轮完成记录（2026-11-23）
 
 - 新增 `src/core/vtt.mjs`：解析 WEBVTT 头、cue 标识/设置行、`HH:MM:SS.mmm` 与 `MM:SS.mmm` 时间码；导出标准 WebVTT；导入时去除 `<i>/<b>/<c>/<v>` 标签并解码常见实体。
 - 导入字幕支持 `.vtt`；导出对话框新增 WebVTT；合并上下轨也支持 VTT。
 - 新增 `test/vtt.test.mjs`；桌面 smoke 覆盖 VTT 导入与导出。
-- 验证：66 个单测、381 条桌面 PASS。
+- 验证：69 个单测、381 条桌面 PASS。
 
 #### 第 6 轮完成记录（2026-11-23）
 
 - 新增「文本工具」标签：当前轨道/选中/全部范围，全部大写、全部小写、首字母大写、句首大写、去行尾空格、去首尾空格、合并多余空格。
 - ASS 覆盖块默认不参与变换；批量操作一次撤销；有未应用草稿或内联编辑时拒绝执行。
 - 新增 `src/core/text-tools.mjs` 与 `test/text-tools.test.mjs`；桌面 smoke 覆盖文本工具标签页打开。
-- 验证：66 个单测、381 条桌面 PASS。
+- 验证：69 个单测、381 条桌面 PASS。
 
 #### 第 5 轮完成记录（2026-11-23）
 
@@ -414,7 +414,7 @@
 - 点击问题定位到字幕并保持 QC 标签；阈值（CPS/最短/最长）随工程保存。
 - 批量修复：去除行尾空格、延长过短字幕、拆分过长字幕；一次撤销。所有修复跳过锁定轨道；延长跳过链接/绑定；拆分跳过 ASS/打轴/链接/绑定；去空格只跳过锁定轨道，均计数提示。
 - 新增 `src/core/qc.mjs` 与 `test/qc.test.mjs`；桌面 smoke 覆盖 QC 标签页打开。
-- 验证：66 个单测、381 条桌面 PASS。
+- 验证：69 个单测、381 条桌面 PASS。
 - [ ] 拼写检查
 - [x] 大小写/修剪（第 6 轮）
 - [ ] 帧率转换
@@ -434,7 +434,7 @@
 - 导出对话框新增「合并上下轨为双行字幕」：自动识别链接对端轨道，显示链接对数、单边条数与首条示例。
 - 合并规则：上轨在前、时间取交集；无重叠按上轨时间并计数；未链接字幕保留单行；ASS 导出样式取上轨。
 - 新增 `src/core/merge.mjs` 与 `test/merge.test.mjs`；桌面 smoke 实际导出 `merged.srt` 并校验双行正文。
-- 验证：66 个单测、381 条桌面 PASS（含合并导出实际写文件与双行校验）。
+- 验证：69 个单测、381 条桌面 PASS（含合并导出实际写文件与双行校验）。
 - [ ] 全部轨道批量导出
 - [ ] 导出预设
 - [ ] 字体检查
@@ -442,9 +442,16 @@
 
 ### M4 发布
 
-- [ ] Windows FFmpeg/安装器
+- [~] Windows FFmpeg/安装器（代码/CI 已就绪，实机验收待做）
 - [ ] macOS 打包/签名策略
 - [ ] 双平台安装回归
+
+#### 第 10 轮完成记录（2026-11-23）
+
+- `scripts/fetch-ffmpeg.mjs` 新增 win32-x64 源（Gyan 9.1 essentials，固定 SHA256），下载后校验并解压 `ffmpeg.exe/ffprobe.exe`。
+- Forge 配置新增 Windows 图标 `SubX.ico`、`win32metadata`、Squirrel `setupIcon/iconUrl`；macOS 本地 `npm run package` 与打包后启动验证通过。
+- 新增 `src/main/windows-association.mjs`：安装/更新写入 HKCU `.subx` 关联，正常启动补齐，卸载清理；`windows-installer.ps1` 检查关联与内置 FFmpeg。
+- CI `make_installers` 前执行 `npm run fetch:ffmpeg`；Windows 干净机/安装后合成仍待 CI 或实机证据。
 - [ ] 文档与已知问题
 - [ ] 公测发布
 
