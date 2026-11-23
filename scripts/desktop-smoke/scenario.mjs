@@ -119,6 +119,8 @@ async function run() {
   await click('styles-tab')
   await click('qc-tab')
   await expect('!document.querySelector("#qc-panel").hidden && document.querySelector("#qc-cps").value === "17" && document.querySelector("#qc-summary").textContent.includes("问题")', 'open the quality check panel')
+  await click('text-tools-tab')
+  await expect('!document.querySelector("#text-tools-panel").hidden && !document.querySelector("#text-upper").disabled', 'open the text tools panel')
   await click('styles-tab')
   const alignedChrome = await exec(`(() => {
     const rail = document.querySelector('.toolrail').getBoundingClientRect()

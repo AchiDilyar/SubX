@@ -158,6 +158,7 @@
             <button id="styles-tab" role="tab" aria-selected="true" aria-controls="styles-panel"><svg class="icon" aria-hidden="true"><use href="#i-style"></use></svg>样式管理</button>
             <button id="settings-tab" role="tab" aria-selected="false" aria-controls="settings-panel"><svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg>项目设置</button>
             <button id="qc-tab" role="tab" aria-selected="false" aria-controls="qc-panel"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>质量检查<span id="qc-count" class="tab-count" hidden></span></button>
+            <button id="text-tools-tab" role="tab" aria-selected="false" aria-controls="text-tools-panel"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg>文本工具</button>
             <button id="cue-tab" role="tab" aria-selected="false" aria-controls="cue-panel" hidden><svg class="icon" aria-hidden="true"><use href="#i-cue"></use></svg>字幕编辑</button>
             <button id="script-tab" role="tab" aria-selected="false" aria-controls="script-panel"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg>待打轴</button>
           </div>
@@ -218,6 +219,20 @@
             <button id="qc-fix-short" type="button">延长过短字幕</button>
             <button id="qc-fix-split" type="button">拆分过长字幕</button>
           </div>
+        </section>
+        <section id="text-tools-panel" class="inspector-body" role="tabpanel" aria-labelledby="text-tools-tab" hidden>
+          <div class="qc-heading"><span>批量处理正文</span></div>
+          <label>范围<select id="text-scope"><option value="track">当前轨道</option><option value="selected">选中的字幕</option><option value="all">全部轨道</option></select></label>
+          <div class="text-tool-grid">
+            <button id="text-upper" type="button">全部大写</button>
+            <button id="text-lower" type="button">全部小写</button>
+            <button id="text-title" type="button">首字母大写</button>
+            <button id="text-sentence" type="button">句首大写</button>
+            <button id="text-trim-end" type="button">去除行尾空格</button>
+            <button id="text-trim" type="button">去除首尾空格</button>
+            <button id="text-collapse" type="button">合并多余空格</button>
+          </div>
+          <p id="text-tool-summary" class="muted">选择范围后执行；ASS 覆盖标签不会被修改。</p>
         </section>
         <section id="script-panel" class="inspector-body" role="tabpanel" aria-labelledby="script-tab" hidden>
           <div class="script-heading">

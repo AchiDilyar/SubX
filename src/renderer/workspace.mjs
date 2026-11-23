@@ -4,6 +4,7 @@ import { inspectSrt, printTime, readTime, writeSrt } from '../core/srt.mjs'
 import { assStyleResetCues, assTextCues, captureCue, pasteCue, groupAssLayers, importAssLayers, moveCuesToTrack, fallbackAssStyle, field, newStyle, readAss, renameAssStyleReset, setField, writeAss } from '../core/ass.mjs'
 import { findMergePartner, mergedExportText, mergeTracks } from '../core/merge.mjs'
 import { analyzeProject, extendShortCues, fixTrailingSpaces, qcSettings, splitLongCues } from '../core/qc.mjs'
+import { TEXT_TOOL_LABELS, transformCueTexts } from '../core/text-tools.mjs'
 import { findTextMatches, replaceTextAt, replaceTextMatches } from '../core/text.mjs'
 
 import { assLayers, bindComposition, fadeOf } from './composition.mjs'
@@ -296,7 +297,8 @@ function hideIconTooltip() {
 }
 document.addEventListener('pointermove', event => {
   const button = event.target.closest?.('button')
-  if (button === tooltipTarget) return
+  // 同一个按钮再次触发时，如果 tooltip 已被滚动/点击隐藏，需要重新计时显示。
+  if (button === tooltipTarget && !iconTooltip.hidden) return
   hideIconTooltip()
   if (!button?.querySelector('svg') || button.textContent.trim()) return
   const label = button.getAttribute('title') || button.dataset.tooltip || button.getAttribute('aria-label')
@@ -1118,6 +1120,7 @@ function render() {
   void syncWatermarkImage()
   applyWatermarkOverlay()
   if ($('qc-tab').getAttribute('aria-selected') === 'true') renderQcPanel()
+  if ($('text-tools-tab').getAttribute('aria-selected') === 'true') updateTextToolSummary()
 }
 
 function refreshTrackControls() {
@@ -1689,7 +1692,7 @@ function endDrag(pointer, commit) {
 
 function switchTab(tab, preview = true) {
   // 标签组使用 roving tabindex：只有当前标签在 Tab 序列里，方向键在标签间移动。
-  for (const name of ['styles', 'settings', 'qc', 'cue', 'script']) {
+  for (const name of ['styles', 'settings', 'qc', 'text-tools', 'cue', 'script']) {
     $(name + '-tab').tabIndex = tab === name ? 0 : -1
   }
   if ($(tab + '-tab').getAttribute('aria-selected') === 'true') {
@@ -1697,12 +1700,13 @@ function switchTab(tab, preview = true) {
     return
   }
   if (punch && tab !== 'script') finishPunch()
-  for (const name of ['styles', 'settings', 'qc', 'cue', 'script']) {
+  for (const name of ['styles', 'settings', 'qc', 'text-tools', 'cue', 'script']) {
     $(name + '-tab').setAttribute('aria-selected', String(tab === name))
     $(name + '-panel').hidden = tab !== name
   }
   revealTab(tab)
   if (tab === 'qc') renderQcPanel()
+  if (tab === 'text-tools') updateTextToolSummary()
   if (preview) refreshInspectorPreview()
 }
 
@@ -3037,6 +3041,7 @@ function applyQcThreshold(key, value) {
 }
 
 action('qc-tab', () => switchTab('qc'))
+action('text-tools-tab', () => switchTab('text-tools'))
 action('qc-refresh', () => renderQcPanel())
 action('qc-fix-trailing', () => runQcFix(() => fixTrailingSpaces(project), '已去除行尾空格'))
 action('qc-fix-short', () => runQcFix(() => extendShortCues(project), '已延长过短字幕'))
@@ -3044,6 +3049,64 @@ action('qc-fix-split', () => runQcFix(() => splitLongCues(project), '已拆分�
 $('qc-cps').addEventListener('change', event => applyQcThreshold('cps', Number(event.target.value)))
 $('qc-min').addEventListener('change', event => applyQcThreshold('minDuration', Number(event.target.value) * 1000))
 $('qc-max').addEventListener('change', event => applyQcThreshold('maxDuration', Number(event.target.value) * 1000))
+
+// —— 文本工具 ——
+function textToolEntries() {
+  const scope = $('text-scope').value
+  if (scope === 'selected') {
+    const result = []
+    for (const id of selectedCueIds()) {
+      const owner = trackFor(id)
+      const cue = findCue(project, id)
+      if (owner && cue && !owner.locked) result.push({ track: owner, cue })
+    }
+    return result
+  }
+  const owners = scope === 'all' ? project.tracks : [track()].filter(Boolean)
+  const result = []
+  for (const owner of owners) {
+    if (!owner || owner.locked) continue
+    for (const cue of owner.cues) result.push({ track: owner, cue })
+  }
+  return result
+}
+
+function updateTextToolSummary() {
+  const count = textToolEntries().length
+  $('text-tool-summary').textContent = count
+    ? '将处理 ' + count + ' 条字幕；ASS 覆盖标签不会被修改。'
+    : '当前范围内没有可处理的字幕。'
+}
+
+function runTextTool(kind) {
+  if (hasPendingForm() || editorOpen()) {
+    status('请先应用或取消字幕修改，再批量处理', 'warn')
+    return
+  }
+  const entries = textToolEntries()
+  if (!entries.length) {
+    status('当前范围内没有可处理的字幕', 'warn')
+    return
+  }
+  const changes = transformCueTexts(entries, kind)
+  if (!changes.length) {
+    status('没有需要修改的正文')
+    return
+  }
+  for (const change of changes) cueDrafts.delete(change.cue.id)
+  edit(() => {
+    for (const change of changes) change.cue.text = change.text
+  })
+  status((TEXT_TOOL_LABELS[kind] ?? kind) + '：' + changes.length + ' 条', 'success')
+}
+
+for (const [id, kind] of [
+  ['text-upper', 'upper'], ['text-lower', 'lower'], ['text-title', 'title'], ['text-sentence', 'sentence'],
+  ['text-trim-end', 'trimEnd'], ['text-trim', 'trim'], ['text-collapse', 'collapse'],
+]) {
+  action(id, () => runTextTool(kind))
+}
+$('text-scope').addEventListener('change', updateTextToolSummary)
 
 // —— 文稿打轴 ——
 const scriptDialog = $('script-dialog')

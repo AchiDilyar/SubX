@@ -15,6 +15,11 @@ function splitSegments(text) {
   return segments
 }
 
+// 对 ASS 覆盖块之外的正文做逐段变换；SRT 由调用方关闭 maskTags。
+export function mapTextSegments(text, transform) {
+  return splitSegments(text).map(segment => segment.tag ? segment.text : transform(segment.text)).join('')
+}
+
 function compile(query, { regex = false, caseSensitive = false } = {}) {
   if (!query) return null
   const source = regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
