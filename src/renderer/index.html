@@ -85,6 +85,9 @@
         <div class="menu-popup" id="menu-edit-popup" role="menu" aria-labelledby="menu-edit" hidden>
           <button type="button" role="menuitem" id="menu-undo"><svg class="icon" aria-hidden="true"><use href="#i-undo"></use></svg><span>撤销</span><kbd>⌘Z</kbd></button>
           <button type="button" role="menuitem" id="menu-redo"><svg class="icon" aria-hidden="true"><use href="#i-redo"></use></svg><span>重做</span><kbd>⇧⌘Z</kbd></button>
+          <hr>
+          <button type="button" role="menuitem" id="menu-shift"><svg class="icon" aria-hidden="true"><use href="#i-trim-start"></use></svg><span>整体平移…</span></button>
+          <button type="button" role="menuitem" id="menu-find"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg><span>查找与替换…</span><kbd>⌘F</kbd></button>
         </div>
       </div>
       <div class="menu">
@@ -294,6 +297,29 @@
   <div id="timeline-menu" class="menu-popup" role="menu" aria-label="时间轴操作" popover="auto"></div>
   <div id="tabs-menu" class="menu-popup tabs-menu" role="menu" aria-label="其他标签" popover="auto"></div>
   <div id="cue-style-menu" class="menu-popup tabs-menu" role="menu" aria-label="设置样式" popover="auto"></div>
+  <div id="find-panel" class="find-panel" role="dialog" aria-modal="false" aria-labelledby="find-title" hidden>
+    <div class="find-head"><h2 id="find-title">查找与替换</h2><button id="find-close" type="button" aria-label="关闭查找" title="关闭查找">×</button></div>
+    <div class="find-row">
+      <label>查找<input id="find-query" type="text" autocomplete="off" spellcheck="false"></label>
+      <label>替换为<input id="find-replacement" type="text" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <div class="find-options-row">
+      <label>范围<select id="find-scope"><option value="track">当前轨道</option><option value="all">全部轨道</option><option value="selected">选中字幕</option></select></label>
+      <div class="find-options">
+        <label><input id="find-case" type="checkbox">区分大小写</label>
+        <label><input id="find-regex" type="checkbox">正则</label>
+        <label title="仅对 ASS 轨道生效"><input id="find-tags" type="checkbox" checked>忽略 ASS 标签</label>
+      </div>
+    </div>
+    <p id="find-summary" class="find-summary" role="status" aria-live="polite">输入查找内容后按 Enter 查找。</p>
+    <p id="find-error" class="cue-editor-error" role="alert" hidden></p>
+    <div class="find-actions">
+      <button id="find-prev" type="button">上一个</button>
+      <button id="find-next" type="button">下一个</button>
+      <button id="find-replace-one" type="button">替换当前</button>
+      <button id="find-replace-all" type="button" class="primary">全部替换</button>
+    </div>
+  </div>
   <div id="cue-editor-popover" class="cue-editor-popover" role="dialog" aria-label="编辑字幕正文" hidden>
     <textarea id="editor-text" rows="2" placeholder="输入字幕正文…" aria-label="字幕正文"></textarea>
     <p id="editor-error" class="cue-editor-error" hidden></p>
@@ -321,6 +347,21 @@
       <p id="split-summary" class="muted"></p>
       <div id="split-preview"></div>
       <div class="dialog-actions"><button value="cancel">取消</button><button class="primary" value="confirm">确认拆分</button></div>
+    </form>
+  </dialog>
+  <dialog id="shift-dialog" aria-labelledby="shift-title" aria-describedby="shift-description">
+    <form id="shift-form">
+      <h2 id="shift-title">整体平移</h2>
+      <p id="shift-description" class="dialog-description">把字幕整体前移或后移；负数表示向前。每条字幕的时长和链接关系保持不变。</p>
+      <div class="columns">
+        <label>偏移方式<select id="shift-mode"><option value="time">按时间</option><option value="frames">按帧</option></select></label>
+        <label>范围<select id="shift-scope"><option value="track">当前轨道</option><option value="selected">选中的字幕</option><option value="all">全部轨道</option></select></label>
+      </div>
+      <label id="shift-time-field">偏移量<input id="shift-time" type="text" value="+00:00:00.500" placeholder="+00:00:00.500 或 -00:00:01.000" autocomplete="off"></label>
+      <label id="shift-frame-field" hidden>偏移帧数<input id="shift-frames" type="number" step="1" value="0"></label>
+      <p id="shift-summary" class="muted" role="status" aria-live="polite"></p>
+      <p id="shift-error" class="cue-editor-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button id="shift-cancel" type="button">取消</button><button class="primary" type="submit">应用平移</button></div>
     </form>
   </dialog>
   <dialog id="project-change-dialog" aria-labelledby="project-change-title">

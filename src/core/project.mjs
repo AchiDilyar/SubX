@@ -236,6 +236,23 @@ export function moveDelta(cues, requested) {
   return Math.max(-cues.reduce((earliest, cue) => Math.min(earliest, cue.start), Infinity), Math.round(requested))
 }
 
+// 整体平移：保留每条字幕的时长；负起点钳到 0，并告诉调用方发生了钳制。
+export function shiftTiming(cue, delta) {
+  const duration = cue.end - cue.start
+  const value = Number.isFinite(delta) ? Math.round(delta) : 0
+  const rawStart = cue.start + value
+  const start = Math.max(0, rawStart)
+  return { start, end: start + duration, clamped: rawStart < 0 }
+}
+
+// 整体钳制偏移量：不能早于范围内最早字幕的起点。这样相对时间和链接时间差不会被逐条钳制破坏。
+export function clampShiftDelta(cues, requested) {
+  const delta = Number.isFinite(requested) ? Math.round(requested) : 0
+  const earliest = cues.reduce((min, cue) => Math.min(min, cue.start), Infinity)
+  if (!Number.isFinite(earliest)) return 0
+  return Math.max(delta, -earliest)
+}
+
 export function trimDelta(cue, edge, requested) {
   const delta = Math.round(requested)
   const duration = cue.end - cue.start

@@ -1,7 +1,8 @@
-import { createProject, createSolidMedia, createTrack, addTopTrack, isSolidMedia, trackIndex, cueTiming, findCue, inspectTrackSplit, linkedIds, moveDelta, normalizeStyleNames, removeCue, splitTrack, trimDelta } from '../core/project.mjs'
+import { createProject, createSolidMedia, createTrack, addTopTrack, isSolidMedia, trackIndex, cueTiming, findCue, inspectTrackSplit, linkedIds, moveDelta, normalizeStyleNames, removeCue, shiftTiming, splitTrack, trimDelta, clampShiftDelta } from '../core/project.mjs'
 import { alignCue, frameBoundaries, nearestBoundary } from '../core/frame-grid.mjs'
 import { inspectSrt, printTime, readTime, writeSrt } from '../core/srt.mjs'
 import { assStyleResetCues, assTextCues, captureCue, pasteCue, groupAssLayers, importAssLayers, moveCuesToTrack, fallbackAssStyle, field, newStyle, readAss, renameAssStyleReset, setField, writeAss } from '../core/ass.mjs'
+import { findTextMatches, replaceTextAt, replaceTextMatches } from '../core/text.mjs'
 
 import { assLayers, bindComposition, fadeOf } from './composition.mjs'
 import { createAssPreview } from './ass-preview.mjs'
@@ -436,6 +437,8 @@ function restore(source, destination) {
   project.media = media
   ensureSelection()
   render()
+  // 撤销/重做会整体替换工程对象，旧查找结果必须按新工程重新解析。
+  if (!findPanel.hidden) runFind({ reset: false })
 }
 
 function ensureSelection() {
@@ -468,6 +471,7 @@ function reset(next, media, documentHandle = null) {
   redo.length = 0
   ensureSelection()
   $('cue-tab').hidden = true
+  closeFindPanel()
   switchTab('styles', false)
   updateTabPages()
   scroll.scrollTop = scroll.scrollLeft = 0
@@ -2476,6 +2480,424 @@ blankVideoDialog.addEventListener('close', () => {
   }).catch(error => status(errorText(error), 'error'))
 })
 
+// —— 整体平移 ——
+const shiftDialog = $('shift-dialog')
+
+function shiftScopeCues() {
+  const scope = $('shift-scope').value
+  if (scope === 'selected') {
+    const result = []
+    for (const id of selectedCueIds()) {
+      const owner = trackFor(id)
+      const cue = findCue(project, id)
+      if (owner && cue && !owner.locked) result.push({ owner, cue })
+    }
+    return { cues: result, skipped: 0 }
+  }
+  if (scope === 'all') {
+    const result = []
+    let skipped = 0
+    for (const owner of project.tracks) {
+      if (owner.locked) {
+        skipped += 1
+        continue
+      }
+      for (const cue of owner.cues) result.push({ owner, cue })
+    }
+    return { cues: result, skipped }
+  }
+  const owner = track()
+  if (!owner) return { cues: [], skipped: 0 }
+  if (owner.locked) return { cues: [], skipped: 1, locked: true }
+  return { cues: owner.cues.map(cue => ({ owner, cue })), skipped: 0 }
+}
+
+function shiftDeltaValue() {
+  if ($('shift-mode').value === 'frames') {
+    const frames = Number($('shift-frames').value)
+    if (!Number.isInteger(frames)) return { error: '请输入整数帧数。' }
+    const fps = Number.isFinite(frameGap) && frameGap > 0 ? 1000 / frameGap : rulerFps()
+    if (!fps) return { error: '当前工程没有帧率信息，无法按帧平移。' }
+    return { delta: Math.round(frames * 1000 / fps), frames, fps: Math.round(fps * 1000) / 1000 }
+  }
+  const value = $('shift-time').value.trim()
+  const match = value.match(/^([+-]?)(\d{1,}):(\d{2}):(\d{2})(?:[.,](\d{1,3}))?$/)
+  if (!match) return { error: '时间格式应为 +00:00:00.500 或 -00:00:01.000。' }
+  const minutes = Number(match[3])
+  const seconds = Number(match[4])
+  if (minutes > 59 || seconds > 59) return { error: '分和秒必须在 0–59 之间。' }
+  const milliseconds = ((Number(match[2]) * 60 + minutes) * 60 + seconds) * 1000 +
+    Number((match[5] ?? '').padEnd(3, '0'))
+  return { delta: (match[1] === '-' ? -1 : 1) * milliseconds }
+}
+
+function formatOffset(value) {
+  return (value < 0 ? '-' : '+') + printTime(Math.abs(value), '.')
+}
+
+function showShiftError(message) {
+  $('shift-error').textContent = message
+  $('shift-error').hidden = false
+}
+
+function updateShiftPreview() {
+  $('shift-error').hidden = true
+  const mode = $('shift-mode').value
+  $('shift-time-field').hidden = mode !== 'time'
+  $('shift-frame-field').hidden = mode !== 'frames'
+  const { cues, skipped, locked } = shiftScopeCues()
+  if (locked) {
+    $('shift-summary').textContent = '当前轨道已锁定，解锁后再平移。'
+    return
+  }
+  if (!cues.length) {
+    $('shift-summary').textContent = skipped ? '当前范围内没有可平移的字幕（锁定轨道已跳过）。' : '当前范围内没有字幕。'
+    return
+  }
+  const parsed = shiftDeltaValue()
+  if (parsed.error) {
+    showShiftError(parsed.error)
+    $('shift-summary').textContent = ''
+    return
+  }
+  const applied = clampShiftDelta(cues.map(({ cue }) => cue), parsed.delta)
+  const adjusted = applied !== parsed.delta
+  if (!applied) {
+    $('shift-summary').textContent = adjusted
+      ? '请求的偏移会早于最早起点，整体钳到 0 后没有可移动空间。'
+      : '偏移量为 0，不会改变字幕。'
+    return
+  }
+  const earliest = cues.reduce((min, { cue }) => Math.min(min, cue.start), Infinity)
+  const parts = ['将平移 ' + cues.length + ' 条字幕 · ' + formatOffset(applied)]
+  if (adjusted) parts.push('（请求 ' + formatOffset(parsed.delta) + '，为保持相对时间整体钳到最早起点）')
+  if (mode === 'frames') parts.push(' · ' + parsed.frames + ' 帧 @ ' + parsed.fps + ' fps')
+  if (skipped) parts.push(' · 已跳过 ' + skipped + ' 条锁定轨道')
+  const shiftedIds = new Set(cues.map(({ cue }) => cue.id))
+  const crossing = cues.some(({ cue }) => (project.links.find(pair => pair.includes(cue.id)) ?? [])
+    .some(id => !shiftedIds.has(id)))
+  if (crossing) parts.push(' · 跨轨链接的对端不会移动')
+  parts.push(' · 最早起点 ' + printTime(earliest, '.'))
+  $('shift-summary').textContent = parts.join('')
+}
+
+action('menu-shift', () => {
+  closeFindPanel()
+  const form = $('shift-form')
+  form.reset()
+  $('shift-mode').value = 'time'
+  $('shift-scope').value = selectedCueIds().length ? 'selected' : 'track'
+  $('shift-time').value = '+00:00:00.500'
+  $('shift-frames').value = '0'
+  const owner = track()
+  $('shift-scope').options[0].textContent = owner ? '当前轨道（' + trackLabel(owner) + '）' : '当前轨道'
+  updateShiftPreview()
+  shiftDialog.showModal()
+  $('shift-time').focus({ preventScroll: true })
+  $('shift-time').select()
+})
+for (const id of ['shift-time', 'shift-frames']) $(id).addEventListener('input', updateShiftPreview)
+for (const id of ['shift-mode', 'shift-scope']) $(id).addEventListener('change', updateShiftPreview)
+$('shift-cancel').addEventListener('click', () => shiftDialog.close())
+$('shift-form').addEventListener('submit', event => {
+  event.preventDefault()
+  const { cues, skipped, locked } = shiftScopeCues()
+  if (locked) {
+    showShiftError('当前轨道已锁定，解锁后再平移。')
+    return
+  }
+  if (!cues.length) {
+    showShiftError('当前范围内没有可平移的字幕。')
+    return
+  }
+  const parsed = shiftDeltaValue()
+  if (parsed.error) {
+    showShiftError(parsed.error)
+    return
+  }
+  const applied = clampShiftDelta(cues.map(({ cue }) => cue), parsed.delta)
+  const adjusted = applied !== parsed.delta
+  if (!applied) {
+    status(adjusted
+      ? '请求的偏移超出最早起点，整体钳到 0 后没有修改字幕。'
+      : '偏移量为 0，没有修改字幕。', 'warn')
+    return
+  }
+  edit(() => {
+    for (const { cue } of cues) {
+      const next = shiftTiming(cue, applied)
+      cue.start = next.start
+      cue.end = next.end
+    }
+  })
+  shiftDialog.close()
+  status('已整体平移 ' + cues.length + ' 条字幕 · ' + formatOffset(applied) +
+    (adjusted ? ' · 请求值已钳到最早起点' : '') +
+    (skipped ? ' · 跳过 ' + skipped + ' 条锁定轨道' : ''), 'success')
+})
+
+// —— 查找与替换 ——
+const findPanel = $('find-panel')
+let findMatches = []
+let findIndex = -1
+let findTimer = 0
+let findSignature = ''
+
+function findOptions() {
+  return { regex: $('find-regex').checked, caseSensitive: $('find-case').checked }
+}
+function findStateSignature() {
+  return JSON.stringify([$('find-query').value, $('find-case').checked, $('find-regex').checked,
+    $('find-tags').checked, $('find-scope').value])
+}
+function resolveFindMatch(match) {
+  const cue = findCue(project, match.cueId)
+  if (!cue) return null
+  const owner = trackFor(cue.id)
+  if (!owner) return null
+  if (cue.text.slice(match.index, match.index + match.length) !== match.text) return null
+  return { owner, cue }
+}
+function findMaskFor(owner, cue) {
+  return $('find-tags').checked && Boolean(owner.ass || cue.assText)
+}
+function findScopeCues() {
+  const scope = $('find-scope').value
+  if (scope === 'selected') {
+    const result = []
+    for (const id of selectedCueIds()) {
+      const owner = trackFor(id)
+      const cue = findCue(project, id)
+      if (owner && cue && !owner.locked) result.push({ owner, cue })
+    }
+    return result
+  }
+  const owners = scope === 'all' ? project.tracks : [track()].filter(Boolean)
+  const result = []
+  for (const owner of owners) {
+    if (owner.locked) continue
+    for (const cue of owner.cues) result.push({ owner, cue })
+  }
+  return result
+}
+function setFindError(message) {
+  $('find-error').textContent = message
+  $('find-error').hidden = false
+}
+function clearFindError() {
+  $('find-error').hidden = true
+  $('find-error').textContent = ''
+}
+function updateFindSummary() {
+  if (!findMatches.length || findIndex < 0) return
+  const match = findMatches[findIndex]
+  $('find-summary').textContent = '第 ' + (findIndex + 1) + ' / ' + findMatches.length +
+    ' 个匹配 · ' + trackLabel(match.owner) + ' · ' + printTime(match.cue.start, '.')
+}
+function runFind({ reset = true, navigate = false } = {}) {
+  clearFindError()
+  findSignature = findStateSignature()
+  const query = $('find-query').value
+  if (!query) {
+    findMatches = []
+    findIndex = -1
+    $('find-summary').textContent = '输入查找内容后按 Enter 查找。'
+    return
+  }
+  const entries = findScopeCues()
+  if (!entries.length) {
+    findMatches = []
+    findIndex = -1
+    $('find-summary').textContent = '当前范围内没有可查找的字幕。'
+    return
+  }
+  const options = findOptions()
+  const matches = []
+  try {
+    for (const { owner, cue } of entries) {
+      const maskTags = findMaskFor(owner, cue)
+      for (const match of findTextMatches(cue.text, query, { ...options, maskTags })) {
+        matches.push({ owner, cue, cueId: cue.id, index: match.index, length: match.length, text: match.text })
+      }
+    }
+  } catch (error) {
+    findMatches = []
+    findIndex = -1
+    setFindError('正则表达式无效：' + error.message)
+    $('find-summary').textContent = ''
+    return
+  }
+  findMatches = matches
+  if (!matches.length) {
+    findIndex = -1
+    $('find-summary').textContent = '没有匹配。'
+    return
+  }
+  findIndex = reset ? 0 : Math.min(findIndex, matches.length - 1)
+  updateFindSummary()
+  if (navigate) focusFindMatch(findIndex)
+}
+function focusFindMatch(index) {
+  if (!findMatches.length) return
+  findIndex = (index + findMatches.length) % findMatches.length
+  const match = findMatches[findIndex]
+  const resolved = resolveFindMatch(match)
+  if (!resolved) {
+    runFind({ reset: false })
+    if (!findMatches.length) {
+      setFindError('匹配位置已变化，请重新查找。')
+      return
+    }
+    focusFindMatch(findIndex)
+    return
+  }
+  // 查找定位是只读操作；先退出链接工具，避免 pick() 意外建立或解除链接。
+  if (linkMode) setLinkMode(false)
+  pick(resolved.owner, resolved.cue)
+  seek(resolved.cue.start)
+  revealTimelinePosition(resolved.cue.start)
+  renderViewport()
+  const field = $('cue-text')
+  if (!field.disabled) {
+    field.focus({ preventScroll: true })
+    field.setSelectionRange(match.index, match.index + match.length)
+  }
+  updateFindSummary()
+}
+function openFindPanel() {
+  findPanel.hidden = false
+  $('find-scope').value = selectedCueIds().length ? 'selected' : 'track'
+  clearFindError()
+  runFind({ reset: true })
+  $('find-query').focus({ preventScroll: true })
+  $('find-query').select()
+}
+function closeFindPanel() {
+  findPanel.hidden = true
+  findMatches = []
+  findIndex = -1
+  clearTimeout(findTimer)
+  clearFindError()
+}
+action('menu-find', () => {
+  if (findPanel.hidden) openFindPanel()
+  else {
+    $('find-query').focus({ preventScroll: true })
+    $('find-query').select()
+  }
+})
+$('find-close').addEventListener('click', closeFindPanel)
+$('find-query').addEventListener('input', () => {
+  clearTimeout(findTimer)
+  findTimer = setTimeout(() => runFind({ reset: true }), 120)
+})
+$('find-query').addEventListener('keydown', event => {
+  if (event.key !== 'Enter') return
+  event.preventDefault()
+  clearTimeout(findTimer)
+  runFind({ reset: true, navigate: true })
+})
+for (const id of ['find-scope', 'find-case', 'find-regex', 'find-tags']) {
+  $(id).addEventListener('change', () => runFind({ reset: true }))
+}
+function navigateFind(direction) {
+  clearTimeout(findTimer)
+  const changed = findSignature !== findStateSignature()
+  if (changed) runFind({ reset: true })
+  if (findMatches.length) focusFindMatch(changed ? findIndex : findIndex + direction)
+}
+$('find-prev').addEventListener('click', () => navigateFind(-1))
+$('find-next').addEventListener('click', () => navigateFind(1))
+$('find-replace-one').addEventListener('click', () => {
+  clearTimeout(findTimer)
+  if (findSignature !== findStateSignature()) {
+    runFind({ reset: true })
+  }
+  if (!findMatches.length || findIndex < 0) {
+    status('请先查找并定位一个匹配。', 'warn')
+    return
+  }
+  const match = findMatches[findIndex]
+  const resolved = resolveFindMatch(match)
+  if (!resolved) {
+    runFind({ reset: false })
+    if (!findMatches.length) setFindError('匹配位置已变化，请重新查找。')
+    return
+  }
+  const { owner, cue } = resolved
+  try {
+    const result = replaceTextAt(cue.text, $('find-query').value, $('find-replacement').value,
+      match.index, { ...findOptions(), maskTags: findMaskFor(owner, cue) })
+    if (!result.count) {
+      setFindError('匹配位置已变化，请重新查找。')
+      return
+    }
+    if (!owner.ass && !cue.assText && hasEmptyLine(result.text)) {
+      setFindError('替换结果会产生空行；SRT 用空行分隔条目，已取消这次替换。')
+      return
+    }
+    cueDrafts.delete(cue.id)
+    edit(() => { cue.text = result.text })
+  } catch (error) {
+    setFindError('替换失败：' + error.message)
+    return
+  }
+  status('已替换 1 处', 'success')
+  runFind({ reset: false })
+  if (findMatches.length) focusFindMatch(findIndex)
+})
+$('find-replace-all').addEventListener('click', () => {
+  const query = $('find-query').value
+  if (!query) {
+    setFindError('请输入查找内容。')
+    return
+  }
+  const options = findOptions()
+  const replacement = $('find-replacement').value
+  const changes = []
+  let count = 0
+  let skipped = 0
+  try {
+    for (const { owner, cue } of findScopeCues()) {
+      const result = replaceTextMatches(cue.text, query, replacement,
+        { ...options, maskTags: findMaskFor(owner, cue) })
+      if (!result.count) continue
+      if (!owner.ass && !cue.assText && hasEmptyLine(result.text)) {
+        skipped += 1
+        continue
+      }
+      changes.push({ cue, text: result.text })
+      count += result.count
+    }
+  } catch (error) {
+    setFindError('正则表达式无效：' + error.message)
+    return
+  }
+  if (!count) {
+    status(skipped ? '替换结果会产生空行，已跳过 ' + skipped + ' 条字幕。' : '没有匹配，未做修改。', 'warn')
+    return
+  }
+  for (const change of changes) cueDrafts.delete(change.cue.id)
+  edit(() => {
+    for (const change of changes) change.cue.text = change.text
+  })
+  status('已替换 ' + count + ' 处' + (skipped ? ' · 跳过 ' + skipped + ' 条会产生空行的字幕' : ''), 'success')
+  runFind({ reset: true })
+})
+findPanel.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return
+  event.preventDefault()
+  event.stopPropagation()
+  closeFindPanel()
+})
+// 打开任何模态对话框时收起查找浮层，避免结果面板留在遮罩后面。
+const findDialogObserver = new MutationObserver(() => {
+  if (!findPanel.hidden && document.querySelector('dialog[open]')) closeFindPanel()
+})
+for (const dialog of document.querySelectorAll('dialog')) {
+  findDialogObserver.observe(dialog, { attributes: true, attributeFilter: ['open'] })
+}
+
 // —— 文稿打轴 ——
 const scriptDialog = $('script-dialog')
 function parseScriptText(text, bilingual) {
@@ -4003,6 +4425,11 @@ window.addEventListener('keydown', event => {
   }
   if (event.key === 'Escape' && drag) endDrag(drag.pointer, false)
   if (event.key === 'Escape' && marquee) endMarquee({ pointerId: marquee.id }, false)
+  if (event.key === 'Escape' && !findPanel.hidden) {
+    event.preventDefault()
+    closeFindPanel()
+    return
+  }
   if (switchingProject || document.querySelector('dialog[open]')) return
   if (event.key === 'Escape' && monitor.classList.contains('preview-maximized')) {
     event.preventDefault()
@@ -4016,7 +4443,7 @@ window.addEventListener('keydown', event => {
     return
   }
   if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey) {
-    const command = { n: 'new-project', o: 'open-project', i: 'import-subtitles', e: 'export-subtitles', q: 'menu-quit' }[event.key.toLowerCase()]
+    const command = { n: 'new-project', o: 'open-project', i: 'import-subtitles', e: 'export-subtitles', f: 'menu-find', q: 'menu-quit' }[event.key.toLowerCase()]
     if (command) {
       event.preventDefault()
       if (!event.repeat) $(command).click()

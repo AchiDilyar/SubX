@@ -13,7 +13,7 @@ const entry = 'subx://app/renderer/index.html'
 const appFiles = new Set([
   '/renderer/index.html', '/renderer/workspace.css', '/renderer/workspace.mjs',
   '/renderer/composition.mjs', '/renderer/ass-preview.mjs', '/assets/NotoSansSC.ttf', '/assets/SubXIcon.png', '/assets/textLOGO.png', '/assets/about-qr.svg',
-  '/core/project.mjs', '/core/srt.mjs', '/core/ass.mjs', '/core/frame-grid.mjs',
+  '/core/project.mjs', '/core/srt.mjs', '/core/ass.mjs', '/core/frame-grid.mjs', '/core/text.mjs',
 ])
 const iconFiles = ["new", "folder", "recent", "save", "copy", "import", "export", "film", "monitor", "sliders", "style", "plus", "play", "pause", "undo", "redo", "track", "cue", "split", "select", "link", "snap", "eye", "eye-off", "info", "arrow", "pencil", "back", "trash", "power", "check", "keyboard", "external", "close", "lock", "expand", "collapse", "razor", "blade", "select-forward", "select-backward", "trim-start", "trim-end", "marker", "remove-track", "wave-symmetric", "wave-asymmetric", "wave-off", "unlock"].map(name => '/assets/icons/' + name + '.png')
 for (const path of iconFiles) appFiles.add(path)
@@ -561,11 +561,11 @@ async function initialize() {
         return {
           label: String(item.label).slice(0, 80), enabled: Boolean(item.enabled),
           ...({ '⌘N': 'Command+N', '⌘O': 'Command+O', '⌘S': 'Command+S',
-            '⇧⌘S': 'Command+Shift+S', '⌘I': 'Command+I', '⌘E': 'Command+E',
+            '⇧⌘S': 'Command+Shift+S', '⌘I': 'Command+I', '⌘F': 'Command+F', '⌘E': 'Command+E',
             '⌘Q': 'Command+Q', '⌘Z': 'Command+Z', '⇧⌘Z': 'Command+Shift+Z',
             }[item.accelerator]
             ? { registerAccelerator: false, accelerator: { '⌘N': 'Command+N', '⌘O': 'Command+O', '⌘S': 'Command+S',
-              '⇧⌘S': 'Command+Shift+S', '⌘I': 'Command+I', '⌘E': 'Command+E',
+              '⇧⌘S': 'Command+Shift+S', '⌘I': 'Command+I', '⌘F': 'Command+F', '⌘E': 'Command+E',
               '⌘Q': 'Command+Q', '⌘Z': 'Command+Z', '⇧⌘Z': 'Command+Shift+Z',
               }[item.accelerator] } : {}),
           ...(item.checked === undefined ? {} : { type: 'checkbox', checked: Boolean(item.checked) }),
