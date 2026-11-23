@@ -1733,8 +1733,11 @@ function updateTabPages() {
 }
 // 弹层以自身尺寸为基准夹在视口内，靠近顶部或底部时都不会溢出。
 function placePopover(menu, left, top) {
-  menu.style.left = Math.max(4, Math.min(innerWidth - menu.offsetWidth - 4, left)) + 'px'
-  menu.style.top = Math.max(4, Math.min(innerHeight - menu.offsetHeight - 4, top)) + 'px'
+  const rect = menu.getBoundingClientRect()
+  const width = rect.width || menu.offsetWidth
+  const height = rect.height || menu.offsetHeight
+  menu.style.left = Math.max(4, Math.min(innerWidth - width - 4, left)) + 'px'
+  menu.style.top = Math.max(4, Math.min(innerHeight - height - 4, top)) + 'px'
 }
 
 function showTabsMenu(side) {
