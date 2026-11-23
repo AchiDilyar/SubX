@@ -33,7 +33,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npm run test:desktop
+      - if: runner.os == 'Windows'
+        run: npm run test:desktop
+        env:
+          SUBX_SMOKE_SHOW_WINDOW: '1'
+      - if: runner.os != 'Windows'
+        run: npm run test:desktop
       - if: github.event_name == 'workflow_dispatch' && inputs.make_installers
         run: npm run fetch:ffmpeg
       - if: github.event_name == 'workflow_dispatch' && inputs.make_installers
