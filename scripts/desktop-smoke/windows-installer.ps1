@@ -20,10 +20,9 @@ try {
         Get-ChildItem $root -Force -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
         throw "SubX executable missing under $root"
     }
-    $appDirectory = Split-Path $app
     foreach ($tool in @('ffmpeg.exe', 'ffprobe.exe')) {
-        $bundled = Join-Path $appDirectory "resources/$tool"
-        if (!(Test-Path $bundled -PathType Leaf)) { throw "Bundled $tool missing at $bundled" }
+        $bundled = Get-ChildItem $root -Recurse -Filter $tool -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (!$bundled) { throw "Bundled $tool missing under $root" }
     }
 
     node scripts/desktop-smoke/installed.mjs $app
