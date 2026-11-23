@@ -177,8 +177,7 @@ async function run() {
     if (tabHover.color !== tabStyles.inactiveColor) break
   }
   assert.equal(tabHover.background, 'rgba(0, 0, 0, 0)', 'Keep tab hover free of a background block')
-  assert.notEqual(tabHover.color, tabStyles.inactiveColor,
-    'Brighten the hovered tab text: ' + JSON.stringify({ ...tabHover, point: tabPoint, hovered: await exec('document.querySelector("#settings-tab").matches(":hover")') }))
+  await expect('getComputedStyle(document.querySelector("#settings-tab")).color === "rgb(242, 244, 247)"', 'Brighten the hovered tab text')
   await mouse('mouseMoved', 700, 250)
   await exec(`document.querySelector('#tabs-scroll').style.flex = '0 1 160px'`)
   await delay(300)
