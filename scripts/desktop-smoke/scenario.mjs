@@ -191,7 +191,7 @@ async function run() {
     const menu = document.querySelector('#tabs-menu')
     const box = menu.getBoundingClientRect()
     return {
-      open: menu.matches(':popover-open'),
+      open: !menu.hidden,
       items: [...menu.querySelectorAll('button')].map(button => button.textContent.trim()),
       inside: box.left >= 3 && box.top >= 3 && box.right <= innerWidth - 3 && box.bottom <= innerHeight - 3,
       box: { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height, innerWidth, innerHeight },

@@ -1744,6 +1744,9 @@ function placePopover(menu, left, top) {
   menu.style.transform = 'translate(' + x + 'px, ' + y + 'px)'
 }
 
+function closeTabsMenu() {
+  tabsMenu.hidden = true
+}
 function showTabsMenu(side) {
   const hidden = hiddenTabButtons(side)
   if (!hidden.length) return
@@ -1756,7 +1759,7 @@ function showTabsMenu(side) {
     item.append(element('span', '', button.textContent.trim()))
     if (button.getAttribute('aria-selected') === 'true') item.setAttribute('aria-selected', 'true')
     item.addEventListener('click', () => {
-      tabsMenu.hidePopover()
+      closeTabsMenu()
       const name = button.id.replace(/-tab$/, '')
       switchTab(name)
       revealTab(name)
@@ -1765,12 +1768,14 @@ function showTabsMenu(side) {
   }))
   const anchor = side === 'left' ? tabsMoreLeft : tabsMoreRight
   const box = anchor.getBoundingClientRect()
+  tabsMenu.hidden = false
   tabsMenu.style.left = '0px'
   tabsMenu.style.top = '0px'
-  tabsMenu.showPopover()
+  tabsMenu.style.transform = 'none'
   const place = () => placePopover(tabsMenu, side === 'left' ? box.left : box.right - tabsMenu.offsetWidth, box.bottom + 4)
   place()
   requestAnimationFrame(place)
+  tabsMenu.querySelector('button')?.focus({ preventScroll: true })
   window.__tabMenuDebug = () => {
     const style = getComputedStyle(tabsMenu)
     return {
@@ -1793,6 +1798,17 @@ function revealTab(name) {
 }
 tabsMoreLeft.addEventListener('click', () => showTabsMenu('left'))
 tabsMoreRight.addEventListener('click', () => showTabsMenu('right'))
+document.addEventListener('pointerdown', event => {
+  if (tabsMenu.hidden) return
+  if (tabsMenu.contains(event.target) || event.target.closest?.('#tabs-more-left, #tabs-more-right')) return
+  closeTabsMenu()
+}, true)
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || tabsMenu.hidden) return
+  closeTabsMenu()
+  event.preventDefault()
+})
+window.addEventListener('blur', closeTabsMenu)
 tabsScroll.addEventListener('keydown', event => {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
   const buttons = visibleTabButtons()
