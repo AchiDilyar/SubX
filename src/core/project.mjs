@@ -169,6 +169,7 @@ export function validateProject(project) {
       }
       if (cue.assFields !== undefined && !validFields(cue.assFields)) throw new Error('工程中的 ASS 事件属性无效')
       if (cue.scriptLine !== undefined && typeof cue.scriptLine !== 'string') throw new Error('工程中的文稿关联无效')
+      if (cue.reviewed !== undefined && typeof cue.reviewed !== 'boolean') throw new Error('工程中的校对状态无效')
       if (cue.ass) sourceRows.add(cue.ass.line)
       ids.add(cue.id)
       cueTracks.set(cue.id, track.id)

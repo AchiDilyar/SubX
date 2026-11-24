@@ -280,7 +280,8 @@
               <span class="cue-meta-item"><span class="cue-meta-label">语速</span><span id="cue-meta-cps">—</span></span>
               <span class="cue-meta-item"><span class="cue-meta-label">链接</span><span id="cue-meta-link">—</span></span>
             </div>
-            <button id="complete-review" type="button" hidden>标为已校对</button>
+            <button id="toggle-reviewed" type="button" hidden>标为已校对</button>
+            <button id="complete-review" type="button" hidden>标为已校对（异常）</button>
             <div class="dialog-actions"><button id="delete-cue" type="button">删除字幕</button><button class="discard-draft" type="button" hidden>取消修改</button><button type="submit" class="primary">应用修改</button></div>
           </form>
           <p id="empty-cue" class="muted">选择时间轴上的字幕以编辑正文和时间。</p>
@@ -303,6 +304,8 @@
           <span id="drag-overlap" hidden>同轨字幕重叠</span>
         </div>
         <div class="timeline-review" role="group" aria-label="校对">
+          <span id="review-progress" title="已校对 0/0">0/0</span>
+          <button id="review-filter" type="button" aria-pressed="false" title="只看未校对字幕" aria-label="只看未校对字幕"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg></button>
           <button id="next-review" type="button" title="定位下一条待校对字幕" aria-label="定位下一条待校对字幕" hidden>待校对 0</button>
         </div>
         <div class="timeline-states" aria-label="时间轴状态切换">

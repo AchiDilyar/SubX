@@ -7,6 +7,7 @@ import { analyzeProject, extendShortCues, fixTrailingSpaces, qcSettings, splitLo
 import { TEXT_TOOL_LABELS, transformCueTexts } from '../core/text-tools.mjs'
 import { nearestRetimeFps, RETIME_FPS, retimeCues } from '../core/retime.mjs'
 import { fontCheckSummary, missingStyleFonts } from '../core/fonts.mjs'
+import { reviewStats } from '../core/review.mjs'
 import { formatTimecode } from '../core/timecode.mjs'
 import { inspectVtt, writeVtt } from '../core/vtt.mjs'
 import { findTextMatches, replaceTextAt, replaceTextMatches } from '../core/text.mjs'
@@ -112,6 +113,7 @@ let autosaveWrite = null
 let autosaveQueued = false
 let autosaveErrorShown = false
 let pendingEditorDraft = null
+let reviewFilter = false
 const width = timeMs => timeMs * pixelsPerSecond / 1000
 const deltaFor = px => Math.round(px * 1000 / pixelsPerSecond)
 // 标尺刻度按帧率取档：帧、秒、分逐级放大；标签在有帧率时显示「时:分:秒.帧」。
@@ -1106,6 +1108,7 @@ function render() {
   $('empty-timeline').hidden = cueTotal > 0
   $('project-stats').textContent = rows.length + ' 条轨道 · ' +
     rows.reduce((sum, row) => sum + row.ordered.length, 0) + ' 条字幕'
+  updateReviewProgress()
   $('undo').disabled = !undo.length
   $('redo').disabled = !redo.length
   refreshTrackControls()
@@ -1297,8 +1300,8 @@ function renderViewport() {
     for (const cue of row.ordered) {
       if (cue.start > visibleEnd && !drag) break
       const { start, end } = cueTiming(cue, drag)
-      if (cue.id !== selected && cue.id !== linkStart &&
-          (start > visibleEnd || end < visibleStart)) continue
+      if (cue.id !== selected && cue.id !== linkStart && !drag &&
+          (start > visibleEnd || end < visibleStart || (reviewFilter && cue.reviewed === true))) continue
       retained.add(cue.id)
       let block = row.buttons.get(cue.id)
       if (!block) {
@@ -1884,6 +1887,13 @@ function updateCueMeta(cue, values) {
   $('cue-meta-link').classList.toggle('linked', linked || bound)
 }
 
+function updateReviewProgress() {
+  const stats = reviewStats(project)
+  $('review-progress').textContent = stats.reviewed + '/' + stats.total
+  $('review-progress').title = '已校对 ' + stats.reviewed + '/' + stats.total + ' · 待校对 ' + stats.pending + ' · ' + stats.percent + '%'
+  $('review-filter').setAttribute('aria-pressed', String(reviewFilter))
+}
+
 function renderCueForm() {
   inspectorForms.delete($('cue-form'))
   const cue = findCue(project, selected)
@@ -1891,6 +1901,8 @@ function renderCueForm() {
   $('empty-cue').hidden = Boolean(cue)
   $('cue-meta').hidden = !cue
   $('complete-review').hidden = !cue?.splitNeedsReview
+  $('toggle-reviewed').hidden = !cue
+  if (cue) $('toggle-reviewed').textContent = cue.reviewed ? '标为待校对' : '标为已校对'
   if (!cue) return
   const locked = Boolean(trackFor(cue.id)?.locked)
   for (const control of $('cue-form').querySelectorAll('input, textarea, select, button')) control.disabled = locked
@@ -4486,9 +4498,34 @@ action('complete-review', () => {
     status('请先应用或取消字幕修改。')
     return
   }
-  edit(() => { delete cue.splitNeedsReview })
+  edit(() => {
+    delete cue.splitNeedsReview
+    cue.reviewed = true
+  })
   $('cue-text').focus({ preventScroll: true })
   status('已标为已校对')
+})
+action('toggle-reviewed', () => {
+  const cue = findCue(project, selected)
+  if (!cue) return
+  if (cueDrafts.has(cue.id)) {
+    status('请先应用或取消字幕修改。')
+    return
+  }
+  edit(() => {
+    if (cue.reviewed) delete cue.reviewed
+    else {
+      cue.reviewed = true
+      delete cue.splitNeedsReview
+    }
+  })
+  status(cue.reviewed ? '已标为已校对' : '已标为待校对')
+})
+action('review-filter', () => {
+  reviewFilter = !reviewFilter
+  $('review-filter').setAttribute('aria-pressed', String(reviewFilter))
+  renderViewport()
+  status(reviewFilter ? '只看待校对字幕' : '显示全部字幕')
 })
 action('add-style', () => createStyle())
 action('about-app', async () => {

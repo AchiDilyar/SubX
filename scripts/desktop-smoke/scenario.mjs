@@ -355,7 +355,7 @@ async function run() {
 
     await captureScreenshot(process.env.SUBX_ICON_SCREENSHOT_PATH || '/private/tmp/subx-icons-check.png')
     // #next-review 是带文字的状态按钮，不参与图标按钮的正方形检查。
-    const squares = await exec(`[...document.querySelectorAll('.timeline-controls button:not(#next-review), .toolrail button, .heading-actions button, .track-heading button')].every(button => { const r = button.getBoundingClientRect(); return Math.abs(r.width - r.height) < .01 })`)
+    const squares = await exec(`[...document.querySelectorAll('.timeline-controls button:not(#next-review):not(#review-filter), .toolrail button, .heading-actions button, .track-heading button')].every(button => { const r = button.getBoundingClientRect(); return Math.abs(r.width - r.height) < .01 })`)
     assert(squares, 'Keep timeline icon buttons square')
     assert.equal(await exec('getComputedStyle(document.documentElement).getPropertyValue("--accent").trim().toLowerCase()'), '#173e76')
     await click('fullscreen-preview')

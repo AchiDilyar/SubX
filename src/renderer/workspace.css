@@ -256,8 +256,11 @@ form input.color-swatch, .color-swatch { width: 46px; min-height: 30px; height: 
 .timeline-states button[aria-pressed=true]:hover:not(:disabled) { background: #214e8b; }
 #drag-overlap { margin-left: 8px; white-space: nowrap; }
 /* 待校对入口：显示在时间轴工具栏右侧，带数量，不再藏在隐藏节点池里。 */
-.timeline-review { display: flex; align-items: center; flex-shrink: 0; margin-left: 8px; }
-.timeline-review:has(#next-review[hidden]) { display: none; }
+.timeline-review { display: flex; align-items: center; flex-shrink: 0; margin-left: 8px; gap: 6px; }
+#review-progress { color: var(--muted); font-size: var(--text-xs); white-space: nowrap; font-variant-numeric: tabular-nums; }
+#review-filter { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; }
+#review-filter .icon { width: 14px; height: 14px; }
+#review-filter[aria-pressed=true] { color: var(--text-strong); border-color: var(--accent); }
 #next-review { width: auto; min-width: 0; height: 28px; padding: 0 10px; border-color: #5a4a2a; background: #2a2418; color: var(--warning); font-size: var(--text-xs); }
 #next-review:hover:not(:disabled) { background: #342c1d; border-color: #6f5b33; }
 .tool-stash { display: none; }
