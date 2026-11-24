@@ -19,7 +19,7 @@
 ## 验证情况
 
 - 单元测试：83/83 通过。
-- 桌面回归：394 条 PASS（macOS 本机）。
+- 桌面回归：394 条 PASS（macOS 本机）；带内置 FFmpeg 的完整合成回归 396 条 PASS。
 - 最新双平台 CI：run 45347650246，macOS 15 arm64 与 Windows 2025 x64 均成功。
 - macOS 发布包：入口、asar、内置 FFmpeg/FFprobe、图标、版本、签名检查通过。
 - 发布文件 SHA-256 见 `out/release-manifest.json`。
