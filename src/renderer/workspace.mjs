@@ -6,6 +6,7 @@ import { findMergePartner, mergedExportText, mergeTracks } from '../core/merge.m
 import { analyzeProject, extendShortCues, fixTrailingSpaces, qcSettings, splitLongCues } from '../core/qc.mjs'
 import { TEXT_TOOL_LABELS, transformCueTexts } from '../core/text-tools.mjs'
 import { nearestRetimeFps, RETIME_FPS, retimeCues } from '../core/retime.mjs'
+import { clampBatchShift, styleUsageCount, uniqueStyleIds } from '../core/batch-edit.mjs'
 import { fontCheckSummary, missingStyleFonts } from '../core/fonts.mjs'
 import { reviewStats } from '../core/review.mjs'
 import { formatTimecode } from '../core/timecode.mjs'
@@ -2829,6 +2830,117 @@ retimeForm.addEventListener('submit', event => {
 $('retime-cancel').addEventListener('click', () => retimeDialog.close())
 for (const id of ['retime-source', 'retime-target', 'retime-scope']) $(id).addEventListener('change', updateRetimeSummary)
 action('menu-retime', openRetimeDialog)
+
+// —— 批量编辑 ——
+const batchDialog = $('batch-dialog')
+const batchForm = $('batch-form')
+function batchCues() {
+  const entries = []
+  for (const id of selectedCueIds()) {
+    const owner = trackFor(id)
+    const cue = findCue(project, id)
+    if (owner && cue && !owner.locked) entries.push({ track: owner, cue })
+  }
+  return entries
+}
+function updateBatchWarning() {
+  const value = $('batch-fontsize').value.trim()
+  if (!value) {
+    $('batch-warning').hidden = true
+    return
+  }
+  const cues = batchCues().map(entry => entry.cue)
+  const defaultStyle = project.styles?.find(style => style.isProjectDefault)?.id
+  const count = styleUsageCount(project, uniqueStyleIds(cues, defaultStyle))
+  $('batch-warning').textContent = '字号会修改这些字幕引用的共享样式，影响 ' + count + ' 条字幕。'
+  $('batch-warning').hidden = false
+}
+function openBatchDialog() {
+  if (switchingProject) return
+  const cues = batchCues()
+  if (cues.length < 2) {
+    status('请先在时间轴上选中至少两条字幕', 'warn')
+    return
+  }
+  if (hasPendingForm() || editorOpen()) {
+    status('请先应用或取消字幕修改，再批量编辑', 'warn')
+    return
+  }
+  const defaultStyle = project.styles?.find(style => style.isProjectDefault)?.id
+  $('batch-style').replaceChildren(new Option('不修改', ''), ...(project.styles ?? []).map(style =>
+    new Option(styleName(style), style.id)))
+  $('batch-summary').textContent = '已选中 ' + cues.length + ' 条字幕'
+  $('batch-duration').value = ''
+  $('batch-shift').value = ''
+  $('batch-style').value = ''
+  $('batch-fontsize').value = ''
+  $('batch-warning').hidden = true
+  $('batch-error').hidden = true
+  $('batch-warning').dataset.defaultStyle = defaultStyle ?? ''
+  batchDialog.showModal()
+}
+$('batch-fontsize').addEventListener('input', updateBatchWarning)
+$('batch-cancel').addEventListener('click', () => batchDialog.close())
+batchForm.addEventListener('submit', event => {
+  event.preventDefault()
+  const entries = batchCues()
+  if (entries.length < 2) {
+    $('batch-error').textContent = '选中字幕不足两条。'
+    $('batch-error').hidden = false
+    return
+  }
+  const durationText = $('batch-duration').value.trim()
+  const shiftText = $('batch-shift').value.trim()
+  const styleId = $('batch-style').value
+  const fontText = $('batch-fontsize').value.trim()
+  const duration = durationText ? Math.round(Number(durationText)) : undefined
+  const shift = shiftText ? Math.round(Number(shiftText)) : undefined
+  const fontSize = fontText ? Math.round(Number(fontText)) : undefined
+  if (!durationText && !shiftText && !styleId && !fontText) {
+    $('batch-error').textContent = '请至少填写一项批量修改。'
+    $('batch-error').hidden = false
+    return
+  }
+  if (durationText && (!Number.isFinite(duration) || duration < 1)) {
+    $('batch-error').textContent = '统一时长必须大于 0 毫秒。'
+    $('batch-error').hidden = false
+    return
+  }
+  if (shiftText && !Number.isFinite(shift)) {
+    $('batch-error').textContent = '平移量必须是整数毫秒。'
+    $('batch-error').hidden = false
+    return
+  }
+  if (fontText && (!Number.isFinite(fontSize) || fontSize < 1 || fontSize > 300)) {
+    $('batch-error').textContent = '字号必须在 1–300 之间。'
+    $('batch-error').hidden = false
+    return
+  }
+  const cues = entries.map(entry => entry.cue)
+  const appliedShift = shift === undefined ? 0 : clampBatchShift(cues, shift)
+  const defaultStyle = project.styles?.find(style => style.isProjectDefault)?.id
+  for (const cue of cues) cueDrafts.delete(cue.id)
+  edit(() => {
+    for (const cue of cues) {
+      if (duration !== undefined) cue.end = cue.start + duration
+      if (appliedShift) {
+        cue.start += appliedShift
+        cue.end += appliedShift
+      }
+      if (styleId) cue.style = styleId
+    }
+    if (fontSize !== undefined) {
+      const styleIds = uniqueStyleIds(cues, defaultStyle)
+      for (const id of styleIds) {
+        const style = project.styles.find(item => item.id === id)
+        if (style) setField(style.fields, 'Fontsize', String(fontSize))
+      }
+    }
+  })
+  batchDialog.close()
+  status('已批量编辑 ' + cues.length + ' 条字幕' + (appliedShift !== shift && shift !== undefined ? ' · 平移已钳到最早起点' : ''), 'success')
+})
+action('menu-batch', openBatchDialog)
 
 // —— 查找与替换 ——
 const findPanel = $('find-panel')

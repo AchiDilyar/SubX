@@ -88,6 +88,7 @@
           <hr>
           <button type="button" role="menuitem" id="menu-shift"><svg class="icon" aria-hidden="true"><use href="#i-trim-start"></use></svg><span>整体平移…</span></button>
           <button type="button" role="menuitem" id="menu-retime"><svg class="icon" aria-hidden="true"><use href="#i-split"></use></svg><span>转换帧率…</span></button>
+          <button type="button" role="menuitem" id="menu-batch"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg><span>批量编辑…</span></button>
           <button type="button" role="menuitem" id="menu-find"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg><span>查找与替换…</span><kbd>⌘F</kbd></button>
         </div>
       </div>
@@ -432,6 +433,23 @@
       <p id="shift-summary" class="muted" role="status" aria-live="polite"></p>
       <p id="shift-error" class="cue-editor-error" role="alert" hidden></p>
       <div class="dialog-actions"><button id="shift-cancel" type="button">取消</button><button class="primary" type="submit">应用平移</button></div>
+    </form>
+  </dialog>
+  <dialog id="batch-dialog" aria-labelledby="batch-title">
+    <form id="batch-form">
+      <h2 id="batch-title">批量编辑</h2>
+      <p id="batch-summary" class="dialog-description"></p>
+      <div class="columns">
+        <label>统一时长（毫秒）<input id="batch-duration" type="number" min="1" step="10" placeholder="不修改"></label>
+        <label>整体平移（毫秒）<input id="batch-shift" type="number" step="10" placeholder="不修改"></label>
+      </div>
+      <div class="columns">
+        <label>应用样式<select id="batch-style"><option value="">不修改</option></select></label>
+        <label>字号<input id="batch-fontsize" type="number" min="1" max="300" placeholder="不修改"></label>
+      </div>
+      <p id="batch-warning" class="muted" hidden></p>
+      <p id="batch-error" class="cue-editor-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button id="batch-cancel" type="button">取消</button><button class="primary" type="submit">应用批量编辑</button></div>
     </form>
   </dialog>
   <dialog id="font-check-dialog" aria-labelledby="font-check-title">
