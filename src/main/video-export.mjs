@@ -63,7 +63,7 @@ export function parseMediaInfo(data, source) {
   const channels = Number(audio.channels ?? 0)
   const profile = String(audio.profile ?? '')
   const audioLabel = audioCodec === 'aac' ? 'AAC'
-    : audioCodec === 'dts' ? (profile ? 'DTS · ' + profile : 'DTS')
+    : audioCodec === 'dts' ? (profile && profile.toLowerCase() !== 'dts' ? 'DTS · ' + profile : 'DTS')
     : audioCodec === 'truehd' ? (profile && !/truehd/i.test(profile) ? 'Dolby TrueHD · ' + profile : 'Dolby TrueHD')
     : audioCodec === 'eac3' ? 'E-AC-3'
     : audioCodec === 'ac3' ? 'AC-3'
