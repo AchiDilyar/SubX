@@ -9,7 +9,7 @@
 
 ## 1. 结论摘要
 
-整体设计语言已经成型：深色中性灰面板、8px 面板圆角、6px 控件圆角、蓝色主色 `#173E76`、橙色字幕块、等宽时间码、紧凑桌面密度。工程态工作区、菜单、样式编辑器、合成视频弹窗的完成度较高，80 个单测与 394 条桌面 PASS 提供了良好的回归保护。
+整体设计语言已经成型：深色中性灰面板、8px 面板圆角、6px 控件圆角、蓝色主色 `#173E76`、橙色字幕块、等宽时间码、紧凑桌面密度。工程态工作区、菜单、样式编辑器、合成视频弹窗的完成度较高，83 个单测与 394 条桌面 PASS 提供了良好的回归保护。
 
 本轮截图审计暴露的主要问题不是“不好看”，而是三类可用性缺口：
 
@@ -296,7 +296,7 @@
 | UX-13 | 整体平移缺失 | 编辑菜单 + 对话框 + `shiftTiming/clampShiftDelta` 纯函数 | `index.html` 编辑菜单、`workspace.mjs` 整体平移段、`core/project.mjs` |
 | UX-14 | 查找替换缺失 | 编辑菜单 + 非模态浮层 + `core/text.mjs` | `index.html` find-panel、`workspace.mjs` 查找段、`core/text.mjs` |
 
-回归：`npm test` 80/80 通过；`npm run test:desktop` 394 条 PASS（第 2 轮新增整体平移/查找替换的菜单与行为断言，见 `scripts/desktop-smoke/scenario.mjs`）。
+回归：`npm test` 83/83 通过；`npm run test:desktop` 394 条 PASS（第 2 轮新增整体平移/查找替换的菜单与行为断言，见 `scripts/desktop-smoke/scenario.mjs`）。
 
 ## 5. 剩余问题清单
 
@@ -381,7 +381,7 @@
 
 - 截图回归：空态、工程态、字幕编辑、样式编辑器、缺失媒体、255px 检查器、1024×700 共 7 张基准图（`out/ui-audit/final/`）。
 - 桌面 smoke：394 条 PASS；第 1 轮调整 4 条既有断言、新增 4 条覆盖；第 2 轮新增编辑菜单、整体平移、查找替换与 ⌘F；第 4 轮新增双语合并导出（含实际写文件与双行校验）；第 5 轮新增质量检查标签页；第 6 轮新增文本工具标签页；第 7 轮新增 WebVTT 导入/导出；第 8 轮新增编码/换行与 SSA v4。
-- 单元测试：80/80（新增 `test/text.test.mjs` 7 条、`test/timing.test.mjs` 3 条、`test/merge.test.mjs` 9 条、`test/qc.test.mjs` 5 条、`test/text-tools.test.mjs` 4 条、`test/vtt.test.mjs` 3 条、`test/encoding.test.mjs` 3 条、`test/ssa.test.mjs` 1 条、`test/windows-association.test.mjs` 3 条、`test/timecode.test.mjs` 5 条、`test/fonts.test.mjs` 2 条、`test/review.test.mjs` 2 条、`test/batch-edit.test.mjs` 2 条）。
+- 单元测试：83/83（新增 `test/text.test.mjs` 7 条、`test/timing.test.mjs` 3 条、`test/merge.test.mjs` 9 条、`test/qc.test.mjs` 5 条、`test/text-tools.test.mjs` 4 条、`test/vtt.test.mjs` 3 条、`test/encoding.test.mjs` 3 条、`test/ssa.test.mjs` 1 条、`test/windows-association.test.mjs` 3 条、`test/timecode.test.mjs` 5 条、`test/fonts.test.mjs` 2 条、`test/review.test.mjs` 2 条、`test/batch-edit.test.mjs` 2 条、`test/media-info.test.mjs` 3 条）。
 - 崩溃恢复手工验证：编辑后 6.5 秒生成 autosave；SIGKILL 主进程后重启弹出恢复对话框；恢复 cue 表单草稿与内联编辑器草稿；保存/退出丢弃后 autosave 消失。
 - 桌面 smoke：394 条 PASS（含撤销/重做、保存、退出丢弃路径），exit 0。
 - 后续每轮 UI 改动至少覆盖：空态、工程态、错误态、窄窗口四类截图，并跑一次桌面 smoke。

@@ -23,10 +23,10 @@
 
 | 项目 | 结果 |
 | --- | --- |
-| 单元测试 | 80/80 通过 |
+| 单元测试 | 83/83 通过 |
 | 桌面回归 | 394 条 PASS（macOS 本机） |
 | macOS 打包 | npm run package 成功，打包后启动打开 demo 工程 |
-| 发布包静态检查 | npm run release:check 通过：入口/asar/FFmpeg/字体图标/版本/签名；最新 asar fad7f49e… |
+| 发布包静态检查 | npm run release:check 通过：入口/asar/FFmpeg/字体图标/版本/签名；最新 asar d59ca2e8… |
 | 发布清单 | npm run release:manifest 生成 out/release-manifest.json（版本/commit/文件 SHA-256） |
 | Windows CI | run 45312344996 双 job 成功；最新 RC run 45331802949 双 job 成功 |
 | Windows 安装器 | Squirrel 安装包构建；内置 FFmpeg H.264 编码、HKCU .subx 关联、卸载清理检查通过 |

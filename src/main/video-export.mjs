@@ -47,10 +47,7 @@ export function bundledEncoders() {
 }
 
 // 读取源视频的容器、HDR 与音轨信息，供合成面板和编码参数使用。
-export async function probeMediaInfo(probe, source, signal) {
-  const options = { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 8 * 1024 * 1024, signal }
-  const { stdout } = await inspect(probe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', resolve(source)], options)
-  const data = JSON.parse(stdout)
+export function parseMediaInfo(data, source) {
   const video = (data.streams ?? []).find(stream => stream.codec_type === 'video') ?? {}
   const audio = (data.streams ?? []).find(stream => stream.codec_type === 'audio') ?? {}
   const side = JSON.stringify(video.side_data_list ?? [])
@@ -67,7 +64,7 @@ export async function probeMediaInfo(probe, source, signal) {
   const profile = String(audio.profile ?? '')
   const audioLabel = audioCodec === 'aac' ? 'AAC'
     : audioCodec === 'dts' ? (profile ? 'DTS · ' + profile : 'DTS')
-    : audioCodec === 'truehd' ? (profile ? 'Dolby TrueHD · ' + profile : 'Dolby TrueHD')
+    : audioCodec === 'truehd' ? (profile && !/truehd/i.test(profile) ? 'Dolby TrueHD · ' + profile : 'Dolby TrueHD')
     : audioCodec === 'eac3' ? 'E-AC-3'
     : audioCodec === 'ac3' ? 'AC-3'
     : audioCodec ? audioCodec.toUpperCase() : '无音轨'
@@ -86,6 +83,12 @@ export async function probeMediaInfo(probe, source, signal) {
     },
     audio: { codec: audioCodec, profile, channels, layout: String(audio.channel_layout ?? ''), label: audioLabel, atmos },
   }
+}
+
+export async function probeMediaInfo(probe, source, signal) {
+  const options = { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 8 * 1024 * 1024, signal }
+  const { stdout } = await inspect(probe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', resolve(source)], options)
+  return parseMediaInfo(JSON.parse(stdout), source)
 }
 
 export async function findEncoder(options, savedPath, signal, selectedPath) {
