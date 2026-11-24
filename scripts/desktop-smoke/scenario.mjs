@@ -95,8 +95,8 @@ async function run() {
   })
   const exec = code => contents.executeJavaScript(code, true)
   const click = id => exec('document.getElementById(' + JSON.stringify(id) + ').click()')
-  async function expect(code, description) {
-    for (let attempt = 0; attempt < 100; attempt++) {
+  async function expect(code, description, timeout = 10000) {
+    for (let attempt = 0; attempt < Math.ceil(timeout / 100); attempt++) {
       if (await exec(code)) {
         console.log('PASS ' + description)
         return
@@ -125,6 +125,10 @@ async function run() {
   await expect('getComputedStyle(document.querySelector("#styles-tab .icon")).color === "rgb(255, 255, 255)"', 'Show the active tab icon in white')
   await click('settings-tab')
   await expect('getComputedStyle(document.querySelector("#settings-tab .icon")).color === "rgb(255, 255, 255)"', 'Show the other active tab icon in white')
+  await click('check-fonts')
+  await expect('document.querySelector("#font-check-dialog").open && document.querySelector("#font-check-summary").textContent.length > 0', 'open the font check dialog', 30000)
+  await exec('document.querySelector("#font-check-dialog button").click()')
+  await expect('!document.querySelector("#font-check-dialog").open', 'close the font check dialog')
   await expect('getComputedStyle(document.querySelector("#styles-tab .icon")).color !== "rgb(255, 255, 255)"', 'Keep inactive tab icons muted')
   await click('styles-tab')
   await click('qc-tab')

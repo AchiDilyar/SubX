@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('subx', {
   waveform: (token, duration) => ipcRenderer.invoke('media:waveform', token, duration),
   chooseMedia: () => ipcRenderer.invoke('media:choose'),
   finishMediaSelection: (token, accepted) => ipcRenderer.invoke('media:finish-selection', token, accepted),
+  installedFonts: () => ipcRenderer.invoke('fonts:installed'),
   chooseSubtitles: () => ipcRenderer.invoke('subtitles:choose'),
   chooseWatermark: () => ipcRenderer.invoke('watermark:choose'),
   readWatermark: file => ipcRenderer.invoke('watermark:read', file),

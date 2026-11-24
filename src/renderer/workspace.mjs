@@ -6,6 +6,7 @@ import { findMergePartner, mergedExportText, mergeTracks } from '../core/merge.m
 import { analyzeProject, extendShortCues, fixTrailingSpaces, qcSettings, splitLongCues } from '../core/qc.mjs'
 import { TEXT_TOOL_LABELS, transformCueTexts } from '../core/text-tools.mjs'
 import { nearestRetimeFps, RETIME_FPS, retimeCues } from '../core/retime.mjs'
+import { fontCheckSummary, missingStyleFonts } from '../core/fonts.mjs'
 import { formatTimecode } from '../core/timecode.mjs'
 import { inspectVtt, writeVtt } from '../core/vtt.mjs'
 import { findTextMatches, replaceTextAt, replaceTextMatches } from '../core/text.mjs'
@@ -4525,6 +4526,23 @@ $('project-timecode-format').addEventListener('change', event => {
   edit(() => {
     project.settings = { fade: false, watermark: false, fadeDuration: 100, ...project.settings, timecodeFormat: event.target.value }
   })
+})
+action('check-fonts', async () => {
+  status('正在读取系统字体…')
+  try {
+    const installed = await app.installedFonts()
+    const missing = missingStyleFonts(project.styles, installed)
+    $('font-check-summary').textContent = fontCheckSummary(missing, project.styles?.length ?? 0)
+    $('font-check-list').replaceChildren(...missing.map(item => {
+      const row = element('li')
+      row.append(element('span', '', item.styleName), element('span', '', item.font))
+      return row
+    }))
+    $('font-check-dialog').showModal()
+    status('字体检查完成')
+  } catch (error) {
+    status(errorText(error), 'error')
+  }
 })
 const toolModes = { 'select-tool': 'select', 'split-tool': 'split', 'select-forward': 'select-forward', 'select-backward': 'select-backward' }
 for (const [id, mode] of Object.entries(toolModes)) action(id, () => setToolMode(mode))

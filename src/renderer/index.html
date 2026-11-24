@@ -194,6 +194,11 @@
               <p class="muted">丢帧仅对 29.97 / 59.94 生效；其他帧率按非丢帧显示。</p>
             </section>
             <section class="settings-group">
+              <h3>字体</h3>
+              <button id="check-fonts" type="button" class="settings-file">检查工程字体</button>
+              <p class="muted">检查样式引用的字体是否已安装；缺失时预览会回退到系统字体。</p>
+            </section>
+            <section class="settings-group">
               <h3>画面</h3>
               <label class="settings-row">
                 <input id="project-watermark" type="checkbox">
@@ -417,6 +422,14 @@
       <p id="shift-summary" class="muted" role="status" aria-live="polite"></p>
       <p id="shift-error" class="cue-editor-error" role="alert" hidden></p>
       <div class="dialog-actions"><button id="shift-cancel" type="button">取消</button><button class="primary" type="submit">应用平移</button></div>
+    </form>
+  </dialog>
+  <dialog id="font-check-dialog" aria-labelledby="font-check-title">
+    <form method="dialog">
+      <h2 id="font-check-title">字体检查</h2>
+      <p id="font-check-summary" class="dialog-description"></p>
+      <ul id="font-check-list"></ul>
+      <div class="dialog-actions"><button autofocus>关闭</button></div>
     </form>
   </dialog>
   <dialog id="retime-dialog" aria-labelledby="retime-title">

@@ -8,6 +8,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { decodeSubtitleText, encodeSubtitleText } from '../core/encoding.mjs'
 import { normalizeStyleNames, validateProject } from '../core/project.mjs'
+import { installedFontFamilies } from './fonts.mjs'
 import { ensureFileAssociation, registerFileAssociation, unregisterFileAssociation } from './windows-association.mjs'
 import { bundledEncoders, encodeVideo, findEncoder, readFrameTimes, readWaveform, validateComposition } from './video-export.mjs'
 
@@ -15,7 +16,7 @@ const entry = 'subx://app/renderer/index.html'
 const appFiles = new Set([
   '/renderer/index.html', '/renderer/workspace.css', '/renderer/workspace.mjs',
   '/renderer/composition.mjs', '/renderer/ass-preview.mjs', '/assets/NotoSansSC.ttf', '/assets/SubXIcon.png', '/assets/textLOGO.png', '/assets/about-qr.svg',
-  '/core/project.mjs', '/core/srt.mjs', '/core/ass.mjs', '/core/frame-grid.mjs', '/core/text.mjs', '/core/merge.mjs', '/core/qc.mjs', '/core/text-tools.mjs', '/core/vtt.mjs', '/core/timecode.mjs', '/core/retime.mjs',
+  '/core/project.mjs', '/core/srt.mjs', '/core/ass.mjs', '/core/frame-grid.mjs', '/core/text.mjs', '/core/merge.mjs', '/core/qc.mjs', '/core/text-tools.mjs', '/core/vtt.mjs', '/core/timecode.mjs', '/core/retime.mjs', '/core/fonts.mjs',
 ])
 const iconFiles = ["new", "folder", "recent", "save", "copy", "import", "export", "film", "monitor", "sliders", "style", "plus", "play", "pause", "undo", "redo", "track", "cue", "split", "select", "link", "snap", "eye", "eye-off", "info", "arrow", "pencil", "back", "trash", "power", "check", "keyboard", "external", "close", "lock", "expand", "collapse", "razor", "blade", "select-forward", "select-backward", "trim-start", "trim-end", "marker", "remove-track", "wave-symmetric", "wave-asymmetric", "wave-off", "unlock"].map(name => '/assets/icons/' + name + '.png')
 for (const path of iconFiles) appFiles.add(path)
@@ -433,6 +434,7 @@ async function initialize() {
       encoding: decoded.encoding,
     }
   }
+  bind('fonts:installed', () => installedFontFamilies())
   bind('subtitles:choose', window => chooseText(window, '字幕', ['srt', 'ass', 'vtt']))
   async function readImageFile(file) {
     const info = await stat(file)
