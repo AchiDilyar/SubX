@@ -346,7 +346,7 @@ async function run() {
         if (css.maskImage === 'none' || css.backgroundColor === 'rgba(0, 0, 0, 0)') failures.push(use.getAttribute('href'))
       }
       const ids = [...document.querySelectorAll('.icon-library symbol')].map(el => el.id.slice(2))
-      const loads = await Promise.all(ids.map(async id => [id, (await fetch('../assets/icons/' + id + '.png')).ok]))
+      const loads = await Promise.all(ids.map(async id => [id, (await fetch('../assets/icons/' + id + '.svg')).ok]))
       return { failures, missing: loads.filter(([, ok]) => !ok).map(([id]) => id), count: ids.length }
     })()`)
     assert.equal(iconAudit.count, 49, 'Cover every existing icon symbol')
@@ -355,7 +355,7 @@ async function run() {
     const inherited = await exec(`(() => { const icon = document.querySelector('#select-tool .icon'); const old = icon.style.color; icon.style.color = 'rgb(23, 62, 118)'; const ok = getComputedStyle(icon).backgroundColor === 'rgb(23, 62, 118)'; icon.style.color = old; return ok })()`)
     assert(inherited, 'Let icon masks inherit their current state color')
     await click('waveform-mode')
-    assert(await exec('getComputedStyle(document.querySelector("#waveform-mode .icon")).maskImage.includes("wave-asymmetric.png")'), 'Switch icon masks for dynamic state changes')
+    assert(await exec('getComputedStyle(document.querySelector("#waveform-mode .icon")).maskImage.includes("wave-asymmetric.svg")'), 'Switch icon masks for dynamic state changes')
     await click('waveform-mode')
     await click('waveform-mode')
 

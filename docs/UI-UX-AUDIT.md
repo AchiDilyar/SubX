@@ -149,6 +149,15 @@
 - 规则：上轨在前、时间取交集；无重叠按上轨时间并计数；未链接字幕保留单行。ASS 导出时 ASS 轨道取上轨样式，纯文本轨道使用项目默认样式；SRT 导出自动去掉 ASS 覆盖标签，同时保留纯文本里的花括号与反斜杠。
 - 已知限制：只合并链接数最多的那一条对端轨道；多条对端轨道需要分次导出；合并结果不写回工程。
 
+### 3.25 SVG 图标体系（第 44 轮新增）
+
+- UI 图标全部切换为 SVG mask，删除 `src/assets/icons/*.png`（49 个旧 PNG）。
+- 新图标集 69 个原始 SVG 全部落入 `src/assets/icons/`，49 个 `#i-*` 语义名使用 SVG 别名。
+- 渲染链路：`<use href="#i-*">` → CSS `mask-image: url(icons/*.svg)`；颜色继续跟随 `currentColor`。
+- 打包验证：`app.asar` 内 `subx://app/assets/icons/play.svg` 可加载，桌面 smoke 396 条 PASS。
+- 截图：`out/ui-audit/round44/01-svg-icons.png`、`round44/02-packaged-svg-icons.png`。
+- 规范：`src/assets/icons/README.md`；品牌字标/应用图标不属于 UI 图标集。
+
 ### 3.24 辅助功能可访问性（第 36 轮新增）
 
 - 应用 ready 后显式开启 Chromium 可访问性（`app.setAccessibilitySupportEnabled(true)`，Linux 除外）。
