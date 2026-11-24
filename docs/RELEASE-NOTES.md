@@ -18,7 +18,7 @@
 
 ## 验证情况
 
-- 单元测试：83/83 通过。
+- 单元测试：84/84 通过。
 - 桌面回归：394 条 PASS（macOS 本机）；带内置 FFmpeg 的完整合成回归 396 条 PASS。
 - 最新双平台 CI：run 45347650246，macOS 15 arm64 与 Windows 2025 x64 均成功。
 - 合成实测：HDR10 HEVC 保留/转 SDR、MP4/MKV/MOV、AAC/DTS/TrueHD 5.1 音频复制通过。

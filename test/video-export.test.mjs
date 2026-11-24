@@ -15,6 +15,13 @@ test('视频合成仅接受面板支持的编码参数', () => {
   assert.doesNotThrow(() => validateComposition(options))
 })
 
+test('保留 HDR 时拒绝非 HEVC 编码', async () => {
+  await assert.rejects(encodeVideo({
+    source: 'missing.mp4', destination: 'missing-out.mp4', binary: 'missing-ffmpeg',
+    options, sourceMeta: { video: { hdr: true } }, signal: new AbortController().signal,
+  }), /保留 HDR/)
+})
+
 test('源片别名和编码器失败均保留原文件并清理临时目录', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'subx-encoder-test-'))
   t.after(() => rm(directory, { recursive: true, force: true }))

@@ -23,7 +23,7 @@
 
 | 项目 | 结果 |
 | --- | --- |
-| 单元测试 | 83/83 通过 |
+| 单元测试 | 84/84 通过 |
 | 桌面回归 | 394 条 PASS（macOS 本机）；带 SUBX_FFMPEG_PATH 的完整合成 smoke 396 条 PASS |
 | macOS 打包 | npm run package 成功，打包后启动打开 demo 工程 |
 | 发布包静态检查 | npm run release:check 通过：入口/asar/FFmpeg/字体图标/版本/签名；最新 asar daa714f9… |
