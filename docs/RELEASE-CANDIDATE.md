@@ -31,7 +31,7 @@
 | Windows CI | run 45312344996 双 job 成功；最新 RC run 45347650246 双 job 成功 |
 | Windows 安装器 | Squirrel 安装包构建；内置 FFmpeg H.264 编码、HKCU .subx 关联、卸载清理检查通过 |
 | 5000 块性能 | 滚动 p95 18.2ms、缩放 17.6ms、可见节点 8–66、堆 6.8MB |
-| 合成容器/音频 | MP4/MKV/MOV 输出通过；AAC 与 DTS 音频复制通过 |
+| 合成容器/音频 | MP4/MKV/MOV 输出通过；AAC、DTS、TrueHD 5.1 音频复制通过 |
 
 ## 3. 已知问题（发布前需确认）
 
@@ -43,7 +43,7 @@
 4. **时间码非丢帧显示**沿用应用既有 HH:MM:SS.FF；标准冒号格式未作为默认。
 5. **SSA v4 样式字段**按原值保留，未做 SSA→ASS Alignment 语义重映射。
 6. **HDR/Atmos 识别**基于 FFprobe 元数据；缺少 side data 的文件可能只显示为通用 HDR/TrueHD。
-7. **音频复制**要求目标容器支持源音频编码；WebM 源当前回退为 MKV 输出。DTS 复制已在 MKV 验证，TrueHD/Dolby Atmos 尚未实机验证。
+7. **音频复制**要求目标容器支持源音频编码；WebM 源当前回退为 MKV 输出。DTS 与 TrueHD 5.1 复制已在 MKV 验证；Dolby Atmos 真实音轨尚未实机验证。
 8. **窄宽度标签栏**仍可能截断标签文字，依赖溢出菜单。
 9. **安装包签名/公证**未完成：macOS Developer ID/公证、Windows 证书签名需发布前配置。
 10. **DMG/Windows 安装程序**未在本轮生成：按项目约定，需用户明确发起首版候选后执行。
