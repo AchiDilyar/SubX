@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('subx', {
   autosaveWrite: data => ipcRenderer.invoke('autosave:write', data),
   autosaveClear: () => ipcRenderer.invoke('autosave:clear'),
   exportSubtitles: data => ipcRenderer.invoke('subtitles:export', data),
+  exportSubtitlesBatch: data => ipcRenderer.invoke('subtitles:export-batch', data),
   composeVideo: options => ipcRenderer.invoke('video:compose', options),
   cancelCompose: () => ipcRenderer.invoke('video:cancel'),
   onComposeProgress: callback => {

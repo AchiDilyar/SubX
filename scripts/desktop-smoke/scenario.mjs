@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmod, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { app, BrowserWindow, dialog, Menu, nativeTheme, net } from 'electron'
@@ -25,7 +25,12 @@ function nextPath(queue) {
   if (name === null) return undefined
   return isAbsolute(name) ? name : join(directory, name)
 }
-dialog.showOpenDialog = async () => {
+dialog.showOpenDialog = async (_window, options) => {
+  if (options?.properties?.includes('openDirectory')) {
+    const target = join(directory, 'batch-export')
+    await mkdir(target, { recursive: true })
+    return { canceled: false, filePaths: [target] }
+  }
   const path = nextPath(picks)
   return { filePaths: path ? [path] : [] }
 }
@@ -1246,6 +1251,17 @@ async function run() {
   await exec('document.querySelector("#export-format button[value=srt]").click()')
   await expect('document.querySelector("#status").textContent.startsWith("已导出 SRT")', 'export merged bilingual SRT')
   assert.match(await readFile(join(directory, 'merged.srt'), 'utf8'), /你好\r?\nHello/, 'merge upper and lower text into two lines')
+  await click('export-subtitles')
+  await exec('document.querySelector("#export-batch").click()')
+  await expect('document.querySelector("#export-merge").checked === false && document.querySelector("#export-batch-summary").textContent.includes("可见轨道")', 'switch the export dialog to batch mode')
+  await exec('(() => { const preset = document.getElementById("export-preset"); preset.value = "windows"; preset.dispatchEvent(new Event("change")) })()')
+  await expect('document.querySelector("#export-encoding").value === "utf-8-bom" && document.querySelector("#export-newline").value === "crlf"', 'apply the Windows export preset')
+  await exec('document.querySelector("#export-format button[value=srt]").click()')
+  await expect('document.querySelector("#status").textContent.includes("个文件")', 'export every visible track to the chosen folder')
+  const batchNames = await readdir(join(directory, 'batch-export'))
+  assert(batchNames.length >= 2, 'batch export wrote one file per visible track')
+  const batchBytes = await readFile(join(directory, 'batch-export', batchNames[0]))
+  assert.deepEqual([...batchBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'batch export honors the Windows BOM preset')
   await click('menu-find')
   await exec('(() => { const scope = document.getElementById("find-scope"); scope.value = "all"; scope.dispatchEvent(new Event("change")); const query = document.getElementById("find-query"); query.value = "Hello"; query.dispatchEvent(new Event("input")) })()')
   await expect('document.querySelector("#find-summary").textContent.includes("匹配") && !document.querySelector("#find-summary").textContent.includes("没有")', 'find subtitle text across all tracks')

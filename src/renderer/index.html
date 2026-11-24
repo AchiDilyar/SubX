@@ -506,12 +506,22 @@
         <span class="settings-text"><strong>合并上下轨为双行字幕</strong><small id="export-merge-summary"></small></span>
       </label>
       <p id="export-merge-preview" class="muted" hidden></p>
+      <label id="export-batch-row" class="export-merge-row">
+        <input id="export-batch" type="checkbox">
+        <span class="settings-text"><strong>导出全部可见轨道</strong><small id="export-batch-summary">每轨一个文件，导出到所选文件夹</small></span>
+      </label>
       <div class="format-options">
         <button value="srt"><strong>SRT</strong><span>时间码与多行正文</span><svg class="icon" aria-hidden="true"><use href="#i-arrow"></use></svg></button>
         <button value="ass"><strong>ASS</strong><span>保留字幕样式与定位</span><svg class="icon" aria-hidden="true"><use href="#i-arrow"></use></svg></button>
         <button value="vtt"><strong>WebVTT</strong><span>网页字幕与简单样式</span><svg class="icon" aria-hidden="true"><use href="#i-arrow"></use></svg></button>
       </div>
       <div class="export-options">
+        <label>预设<select id="export-preset">
+          <option value="custom">自定义</option>
+          <option value="windows">Windows</option>
+          <option value="gb18030">GB18030</option>
+          <option value="web">网页</option>
+        </select></label>
         <label>编码<select id="export-encoding">
           <option value="utf-8" selected>UTF-8</option>
           <option value="utf-8-bom">UTF-8 BOM</option>

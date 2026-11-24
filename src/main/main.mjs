@@ -627,6 +627,35 @@ async function initialize() {
     return done
   })
   bind('video:cancel', window => { compositions.get(window)?.controller.abort() })
+  bind('subtitles:export-batch', async (window, data) => {
+    const { files, encoding = 'utf-8', newline = 'lf' } = data ?? {}
+    if (!Array.isArray(files) || !files.length || files.length > 100) throw new Error('无效的批量导出内容')
+    if (!['utf-8', 'utf-8-bom', 'utf-16le', 'gb18030'].includes(encoding) || !['lf', 'crlf'].includes(newline)) {
+      throw new Error('无效的导出编码')
+    }
+    const safe = files.map(file => {
+      if (!file || !['srt', 'ass', 'vtt'].includes(file.format) || typeof file.text !== 'string') {
+        throw new Error('无效的批量导出文件')
+      }
+      const name = String(file.name ?? '').replace(/[\\/:*?"<>|]/g, '_').trim() || '字幕'
+      return { name, format: file.format, text: file.text }
+    })
+    const result = await dialog.showOpenDialog(window, {
+      title: '选择导出文件夹',
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (result.canceled || !result.filePaths?.[0]) return 0
+    const directory = result.filePaths[0]
+    const used = new Set()
+    for (const file of safe) {
+      let name = file.name
+      let suffix = 2
+      while (used.has((name + '.' + file.format).toLowerCase())) name = file.name + ' (' + suffix++ + ')'
+      used.add((name + '.' + file.format).toLowerCase())
+      await writeAtomically(join(directory, name + '.' + file.format), encodeSubtitleText(file.text, encoding, newline))
+    }
+    return safe.length
+  })
   bind('subtitles:export', async (window, data) => {
     const { name, text, format, encoding = 'utf-8', newline = 'lf' } = data
     if (!['srt', 'ass', 'vtt'].includes(format) || typeof text !== 'string' || typeof name !== 'string') {

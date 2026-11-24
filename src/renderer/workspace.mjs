@@ -3880,6 +3880,11 @@ function exportOptionNote() {
   const label = { 'utf-8': 'UTF-8', 'utf-8-bom': 'UTF-8 BOM', 'utf-16le': 'UTF-16LE', gb18030: 'GB18030' }[encoding] ?? encoding
   return encoding === 'utf-8' && newline === 'lf' ? '' : ' · ' + label + ' / ' + newline.toUpperCase()
 }
+function updateExportBatchSummary() {
+  const count = project.tracks.filter(track => track.visible && !track.locked &&
+    (track.cues.length || track.ass)).length
+  $('export-batch-summary').textContent = '将导出 ' + count + ' 条可见轨道，每轨一个文件到所选文件夹'
+}
 function updateExportMergePreview() {
   const preview = $('export-merge-preview')
   if (!$('export-merge').checked || !exportPartner || !exportSelection) {
@@ -3899,6 +3904,27 @@ function updateExportMergePreview() {
   }
 }
 $('export-merge').addEventListener('change', updateExportMergePreview)
+$('export-batch').addEventListener('change', () => {
+  if ($('export-batch').checked) {
+    $('export-merge').checked = false
+    updateExportMergePreview()
+  }
+  updateExportBatchSummary()
+})
+const exportPresets = {
+  windows: { encoding: 'utf-8-bom', newline: 'crlf' },
+  gb18030: { encoding: 'gb18030', newline: 'crlf' },
+  web: { encoding: 'utf-8', newline: 'lf' },
+}
+$('export-preset').addEventListener('change', () => {
+  const preset = exportPresets[$('export-preset').value]
+  if (!preset) return
+  $('export-encoding').value = preset.encoding
+  $('export-newline').value = preset.newline
+})
+for (const id of ['export-encoding', 'export-newline']) {
+  $(id).addEventListener('change', () => { $('export-preset').value = 'custom' })
+}
 action('export-subtitles', () => {
   if (switchingProject) return
   const current = track()
@@ -3922,26 +3948,49 @@ action('export-subtitles', () => {
   dialog.returnValue = 'cancel'
   $('export-encoding').value = 'utf-8'
   $('export-newline').value = 'lf'
+  $('export-preset').value = 'custom'
+  $('export-batch').checked = false
+  updateExportBatchSummary()
   $('ass-export-note').hidden = !current.ass
-  for (const value of ['srt', 'vtt']) dialog.querySelector('button[value="' + value + '"]').disabled = !current.cues.length
+  const anyVisible = project.tracks.some(track => track.visible && !track.locked && track.cues.length)
+  for (const value of ['srt', 'vtt']) dialog.querySelector('button[value="' + value + '"]').disabled = !anyVisible
   dialog.showModal()
   dialog.querySelector(`button[value="${current.ass ? 'ass' : 'srt'}"]`).focus()
 })
-async function exportTrack(current, format) {
+function trackExportText(current, format) {
   const cues = format === 'ass' ? current.cues : assTextCues(current, !current.ass)
+  if (format !== 'ass' && !cues.length) return null
   const skipped = current.cues.length - cues.length
-  const summary = skipped ? ' · 跳过 ' + skipped + ' 条无正文事件' : ''
-  if (format !== 'ass' && !cues.length) {
-    status('此轨道没有可导出的字幕正文' + summary)
-    return
-  }
   const layer = current.ass && !current.ass.indexed ? undefined : trackIndex(project.tracks, current)
   const text = format === 'ass'
     ? writeAss(current, project.styles, fadeOf(project.settings), layer)
     : format === 'vtt' ? writeVtt(cues) : writeSrt(cues)
-  if (await app.exportSubtitles({ name: trackLabel(current), format, text, ...exportOptions() })) {
+  return { text, skipped }
+}
+async function exportTrack(current, format) {
+  const result = trackExportText(current, format)
+  if (!result) {
+    status('此轨道没有可导出的字幕正文')
+    return
+  }
+  const summary = result.skipped ? ' · 跳过 ' + result.skipped + ' 条无正文事件' : ''
+  if (await app.exportSubtitles({ name: trackLabel(current), format, text: result.text, ...exportOptions() })) {
     status('已导出 ' + format.toUpperCase() + summary + exportOptionNote())
   }
+}
+async function exportAllTracks(format) {
+  const files = []
+  for (const track of project.tracks) {
+    if (!track.visible || track.locked) continue
+    const result = trackExportText(track, format)
+    if (result) files.push({ name: trackLabel(track), format, text: result.text })
+  }
+  if (!files.length) {
+    status('没有可导出的可见轨道')
+    return
+  }
+  const count = await app.exportSubtitlesBatch({ files, ...exportOptions() })
+  if (count) status('已导出 ' + count + ' 个文件 · ' + format.toUpperCase() + exportOptionNote(), 'success')
 }
 async function exportMergedTrack(current, partner, format) {
   const merged = mergedExportText(project, current, partner, format, { fade: fadeOf(project.settings) })
@@ -3960,13 +4009,15 @@ $('export-format').addEventListener('close', async () => {
   const current = exportSelection
   const partner = exportPartner
   const merge = $('export-merge').checked && Boolean(partner)
+  const batch = $('export-batch').checked
   exportSelection = undefined
   exportPartner = undefined
   $('export-merge-row').hidden = true
   $('export-merge-preview').hidden = true
   if (!['srt', 'ass', 'vtt'].includes(format) || !current || switchingProject) return
   try {
-    if (merge) await exportMergedTrack(current, partner, format)
+    if (batch) await exportAllTracks(format)
+    else if (merge) await exportMergedTrack(current, partner, format)
     else await exportTrack(current, format)
   } catch (error) { status(errorText(error), 'error') }
 })
