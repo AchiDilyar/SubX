@@ -290,6 +290,8 @@ function createWindow() {
 
 async function initialize() {
   nativeTheme.themeSource = 'dark'
+  // app ready 后才能开启；让 VoiceOver 等辅助技术读取渲染层控件。
+  if (process.platform !== 'linux') app.setAccessibilitySupportEnabled(true)
   // 打包后的资源可能丢失可执行位，启动时给内置 FFmpeg 补一次权限。
   for (const binary of bundledEncoders()) chmod(binary, 0o755).catch(() => {})
   protocol.handle('subx-media', streamMedia)

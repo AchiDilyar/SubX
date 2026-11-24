@@ -121,6 +121,7 @@ async function run() {
     await writeFile(path, Buffer.from(capture.data, 'base64'))
   }
   await expect('document.getElementById("ruler").children.length > 0', 'load Electron workspace')
+  assert(app.isAccessibilitySupportEnabled(), 'Enable Chromium accessibility for renderer controls')
   assert(contents.session.isSpellCheckerEnabled(), 'Enable the native spell checker')
   assert(contents.session.getSpellCheckerLanguages().includes('en-US'), 'Load the en-US spell-check dictionary')
   assert.equal(await exec('document.querySelector("#timecode").value'), '00:00:00.00', 'Use a 30 fps timebase for empty projects')
