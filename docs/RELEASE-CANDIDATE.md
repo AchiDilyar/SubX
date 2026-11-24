@@ -33,7 +33,7 @@
 
 ## 3. 已知问题（发布前需确认）
 
-最终截图巡检见 [FINAL-UI-SWEEP.md](FINAL-UI-SWEEP.md)。
+用户向发布说明见 [RELEASE-NOTES.md](RELEASE-NOTES.md)；最终截图巡检见 [FINAL-UI-SWEEP.md](FINAL-UI-SWEEP.md)。
 
 1. **Windows 真实桌面启动未验收**：CI 为无桌面会话，Squirrel 启动器立即返回 0；需 Windows 实机从开始菜单启动并检查窗口/字幕渲染。
 2. **拼写检查样例验收未自动化**：已接入 Electron en-US 词典与右键建议，但“英文 20 条样例”尚未形成自动断言；词典语言暂固定 en-US。

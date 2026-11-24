@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <strong>0.1.0-dev</strong> · 开发预览版，尚未发布正式版本
+  <strong>0.1.0-dev</strong> · 开发预览版，尚未发布正式版本 · <a href="docs/RELEASE-NOTES.md">发布说明</a>
 </p>
 
 <p align="center">
