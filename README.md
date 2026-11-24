@@ -59,6 +59,28 @@ npm run package   # 输出到 out/
 npm run make -- --platform=win32 --arch=x64   # Windows 安装程序
 ```
 
+## 快捷键
+
+- `Space`：播放 / 暂停
+- `⌘N` / `⌘O` / `⌘S`：新建 / 打开 / 保存
+- `⌘I` / `⌘E`：导入 / 导出字幕
+- `⌘Z` / `⇧⌘Z`：撤销 / 重做
+- `⌘A` / `⌘C` / `⌘V` / `Delete`：全选当前轨道 / 复制 / 粘贴 / 删除
+- `←` / `→`，`Shift + ←` / `→`：移动 / 快速移动播放头
+- `+` / `−`：缩放时间轴
+
+完整列表见应用内「关于 → 快捷键一览」；Windows 上把 `⌘` 换成 `Ctrl`。
+
+## 系统要求
+
+- macOS：Apple Silicon
+- Windows：x64（实机验收待完成）
+- 源码开发：Node.js 22.13 或更高
+
+## 反馈
+
+遇到导入/导出错误、字幕错位或合成失败，请在 [GitHub Issues](https://github.com/AchiDilyar/SubX/issues) 附上工程文件、原始字幕和错误日志；Windows 实机问题请注明系统版本。
+
 ## 开发
 
 ```bash
