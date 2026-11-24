@@ -460,7 +460,8 @@
 - [~] macOS 打包验证通过；签名/公证策略待发布前配置
 - [ ] 双平台安装回归
 
-发布候选说明见 [RELEASE-CANDIDATE.md](RELEASE-CANDIDATE.md)。
+发布候选说明见 [RELEASE-CANDIDATE.md](RELEASE-CANDIDATE.md)；
+`npm run release:check` 已校验最新 macOS 包的入口、asar、FFmpeg、图标、版本与签名。
 
 #### 第 24 轮完成记录（2026-11-24）
 

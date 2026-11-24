@@ -12,6 +12,7 @@
     "make": "electron-forge make",
     "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs",
     "test:desktop": "node scripts/desktop-smoke/run.mjs",
+    "release:check": "node scripts/release-check.mjs",
     "test:preview": "node scripts/desktop-smoke/run.mjs --preview"
   },
   "devDependencies": {

@@ -64,6 +64,7 @@ npm run make -- --platform=win32 --arch=x64   # Windows 安装程序
 ```bash
 npm test              # 单元测试
 npm run test:desktop  # Electron 桌面回归
+npm run release:check # 检查 out/ 下 macOS 发布包
 ```
 
 ## 说明
