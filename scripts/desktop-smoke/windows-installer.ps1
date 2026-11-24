@@ -25,7 +25,7 @@ try {
         if (!$bundled) { throw "Bundled $tool missing under $root" }
     }
 
-    node scripts/desktop-smoke/installed.mjs $app
+    node scripts/desktop-smoke/installed-lite.mjs $app
     if ($LASTEXITCODE -ne 0) { throw "Installed SubX smoke test failed" }
 
     $association = Get-ItemProperty 'HKCU:\Software\Classes\.subx' -ErrorAction Stop
