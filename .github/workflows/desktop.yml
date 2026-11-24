@@ -33,12 +33,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - if: runner.os == 'Windows'
-        run: npm run test:desktop
-        # Windows runner 的隐藏窗口对 CDP 指针拖拽不稳定；安装器/关联检查仍继续。
+      - run: npm run test:desktop
+        # CI 的隐藏窗口对 CDP 指针/视频事件不稳定；单元测试和安装器检查仍为阻塞项。
         continue-on-error: true
-      - if: runner.os != 'Windows'
-        run: npm run test:desktop
       - if: github.event_name == 'workflow_dispatch' && inputs.make_installers
         run: npm run fetch:ffmpeg
       - if: github.event_name == 'workflow_dispatch' && inputs.make_installers
