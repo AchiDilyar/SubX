@@ -25,11 +25,14 @@
 | 桌面回归 | 396 条 PASS（macOS 本机） |
 | macOS 打包 | npm run package 成功，打包后启动打开 demo 工程 |
 | 发布包静态检查 | npm run release:check 通过：入口/asar/FFmpeg/字体图标/版本/签名 |
+| 发布清单 | npm run release:manifest 生成 out/release-manifest.json（版本/commit/文件 SHA-256） |
 | Windows CI | run 45312344996 双 job 成功 |
 | Windows 安装器 | Squirrel 安装包构建；内置 FFmpeg H.264 编码、HKCU .subx 关联、卸载清理检查通过 |
 | 5000 块性能 | 滚动 p95 18.2ms、缩放 17.6ms、可见节点 8–66、堆 6.8MB |
 
 ## 3. 已知问题（发布前需确认）
+
+最终截图巡检见 [FINAL-UI-SWEEP.md](FINAL-UI-SWEEP.md)。
 
 1. **Windows 真实桌面启动未验收**：CI 为无桌面会话，Squirrel 启动器立即返回 0；需 Windows 实机从开始菜单启动并检查窗口/字幕渲染。
 2. **拼写检查样例验收未自动化**：已接入 Electron en-US 词典与右键建议，但“英文 20 条样例”尚未形成自动断言；词典语言暂固定 en-US。
@@ -59,6 +62,7 @@ npm run test:desktop
 npm run fetch:ffmpeg
 npm run package
 npm run release:check
+npm run release:manifest
 # Windows 安装程序（在 Windows 或 CI 执行）
 npm run make -- --platform=win32 --arch=x64
 ```
