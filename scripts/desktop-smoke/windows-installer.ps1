@@ -26,6 +26,9 @@ try {
     }
 
     $profile = Join-Path $env:TEMP ("subx-installed-" + [guid]::NewGuid().ToString('N'))
+    # Squirrel 安装后可能已启动一个实例；单实例锁会让新进程立即以 0 退出。
+    Get-Process SubX -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep -Milliseconds 500
     $process = Start-Process -FilePath $app -ArgumentList "--user-data-dir=$profile" -PassThru
     Start-Sleep -Seconds 6
     if ($process.HasExited) { throw "Installed SubX exited immediately with code $($process.ExitCode)" }
