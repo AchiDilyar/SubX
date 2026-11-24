@@ -5,11 +5,11 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { encodeVideo, validateComposition } from '../src/main/video-export.mjs'
 
-const options = { codec: 'h264', crf: 20, preset: 'medium', height: 'source', fps: 'source', audio: '192', layers: [] }
+const options = { codec: 'h264', bitrate: 8, preset: 'medium', audioMode: 'encode', audio: '192', layers: [] }
 
 test('视频合成仅接受面板支持的编码参数', () => {
-  for (const invalid of [{ crf: 52 }, { crf: 2.5 }, { codec: 'copy' }, { height: '-1' },
-    { audio: 'copy' }, { fps: '0' }, { preset: '' }, { layers: [42] }]) {
+  for (const invalid of [{ bitrate: 0 }, { bitrate: 101 }, { codec: 'copy' },
+    { audio: 'copy' }, { audioMode: 'stream' }, { preset: '' }, { layers: [42] }]) {
     assert.throws(() => validateComposition({ ...options, ...invalid }), /设置/)
   }
   assert.doesNotThrow(() => validateComposition(options))

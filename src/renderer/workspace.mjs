@@ -5,7 +5,6 @@ import { assStyleResetCues, assTextCues, captureCue, pasteCue, groupAssLayers, i
 import { findMergePartner, mergedExportText, mergeTracks } from '../core/merge.mjs'
 import { analyzeProject, extendShortCues, fixTrailingSpaces, qcSettings, splitLongCues } from '../core/qc.mjs'
 import { TEXT_TOOL_LABELS, transformCueTexts } from '../core/text-tools.mjs'
-import { nearestRetimeFps, RETIME_FPS, retimeCues } from '../core/retime.mjs'
 import { clampBatchShift, styleUsageCount, uniqueStyleIds } from '../core/batch-edit.mjs'
 import { fontCheckSummary, missingStyleFonts } from '../core/fonts.mjs'
 import { reviewStats } from '../core/review.mjs'
@@ -674,9 +673,21 @@ function playheadPosition() {
   return frameTimes[Math.max(0, frameAt(time + .51) - 1)]
 }
 
+function updateMarkerButton() {
+  const at = Math.round(playheadPosition())
+  const onMarker = (project.markers ?? []).some(mark => Math.abs(mark - at) <= 60)
+  const button = $('toggle-marker')
+  button.classList.toggle('remove-marker', onMarker)
+  button.title = onMarker ? '删除标记' : '添加标记'
+  button.setAttribute('aria-label', onMarker ? '删除标记' : '添加标记')
+  const use = button.querySelector('use')
+  use?.setAttribute('href', onMarker ? '#i-marker-remove' : '#i-marker')
+}
+
 function updatePlayhead() {
   $('playhead').style.left = width(playheadPosition()) + 'px'
   renderPlayingCue()
+  updateMarkerButton()
   updateZoomPlayhead()
 }
 
@@ -861,7 +872,7 @@ function snapRulerTime(value) {
 function snapPlayheadTime(value) {
   const rounded = Math.round(value)
   if (frameTimes?.length) {
-    const boundaries = editingBoundaries()
+    const boundaries = [...editingBoundaries(), ...(project.markers ?? [])].sort((a, b) => a - b)
     if (boundaries.length >= 2) return nearestBoundary(boundaries, rounded) ?? rounded
     return rounded
   }
@@ -1184,6 +1195,7 @@ function cueEdgeTimes() {
     if (!row.track.visible) continue
     for (const cue of row.ordered) edges.push(cue.start, cue.end)
   }
+  for (const mark of project.markers ?? []) edges.push(mark)
   edges.sort((a, b) => a - b)
   edgeCacheEdges = edges
   return edges
@@ -1564,6 +1576,7 @@ function startDrag(event, track, cue) {
       if (!row.track.visible) continue
       for (const other of row.ordered) if (!ids.has(other.id)) boundaries.push(other.start, other.end)
     }
+    for (const mark of project.markers ?? []) boundaries.push(mark)
   }
   const limits = edge ? trimLimits(cues, edge) : undefined
   const limit = edge
@@ -2746,97 +2759,6 @@ $('shift-form').addEventListener('submit', event => {
     (adjusted ? ' · 请求值已钳到最早起点' : '') +
     (skipped ? ' · 跳过 ' + skipped + ' 条锁定轨道' : ''), 'success')
 })
-
-// —— 帧率转换 ——
-const retimeDialog = $('retime-dialog')
-const retimeForm = $('retime-form')
-for (const id of ['retime-source', 'retime-target']) {
-  $(id).replaceChildren(...RETIME_FPS.map(fps => new Option(String(fps), String(fps))))
-}
-function retimeEntries() {
-  const scope = $('retime-scope').value
-  const entries = new Map()
-  const add = id => {
-    const owner = trackFor(id)
-    const cue = findCue(project, id)
-    if (owner && cue && !owner.locked) entries.set(cue.id, { track: owner, cue })
-  }
-  if (scope === 'all') {
-    for (const owner of project.tracks) {
-      if (owner.locked) continue
-      for (const cue of owner.cues) entries.set(cue.id, { track: owner, cue })
-    }
-    return [...entries.values()]
-  }
-  const ids = scope === 'track' ? (track()?.cues.map(cue => cue.id) ?? []) : selectedCueIds()
-  for (const id of ids) add(id)
-  for (const pair of project.links ?? []) {
-    if (ids.includes(pair[0])) add(pair[1])
-    if (ids.includes(pair[1])) add(pair[0])
-  }
-  return [...entries.values()]
-}
-function updateRetimeSummary() {
-  const entries = retimeEntries()
-  const source = Number($('retime-source').value)
-  const target = Number($('retime-target').value)
-  const ratio = source > 0 ? target / source : 0
-  $('retime-summary').textContent = entries.length
-    ? '将转换 ' + entries.length + ' 条字幕 · 比例 ' + ratio.toFixed(4) + ' · ' + source + ' → ' + target + ' fps'
-    : '当前范围内没有可转换的字幕。'
-}
-function openRetimeDialog() {
-  if (switchingProject) return
-  if (hasPendingForm() || editorOpen()) {
-    status('请先应用或取消字幕修改，再转换帧率', 'warn')
-    return
-  }
-  const current = rulerFps() || 30
-  const source = nearestRetimeFps(current)
-  $('retime-source').value = String(source)
-  $('retime-target').value = String(source === 25 ? 24 : 25)
-  $('retime-scope').value = 'all'
-  $('retime-error').hidden = true
-  updateRetimeSummary()
-  retimeDialog.showModal()
-}
-retimeForm.addEventListener('submit', event => {
-  event.preventDefault()
-  const source = Number($('retime-source').value)
-  const target = Number($('retime-target').value)
-  if (!Number.isFinite(source) || !Number.isFinite(target) || source <= 0 || target <= 0) {
-    $('retime-error').textContent = '帧率必须为正数。'
-    $('retime-error').hidden = false
-    return
-  }
-  if (Math.abs(source - target) < 0.001) {
-    $('retime-error').textContent = '源帧率与目标帧率相同，无需转换。'
-    $('retime-error').hidden = false
-    return
-  }
-  const entries = retimeEntries()
-  if (!entries.length) {
-    $('retime-error').textContent = '当前范围内没有可转换的字幕。'
-    $('retime-error').hidden = false
-    return
-  }
-  const changes = retimeCues(entries.map(entry => entry.cue), source, target)
-  for (const change of changes) cueDrafts.delete(change.id)
-  edit(() => {
-    for (const change of changes) {
-      const cue = findCue(project, change.id)
-      if (cue) {
-        cue.start = change.start
-        cue.end = change.end
-      }
-    }
-  })
-  retimeDialog.close()
-  status('已转换 ' + changes.length + ' 条字幕 · ' + source + ' → ' + target + ' fps', 'success')
-})
-$('retime-cancel').addEventListener('click', () => retimeDialog.close())
-for (const id of ['retime-source', 'retime-target', 'retime-scope']) $(id).addEventListener('change', updateRetimeSummary)
-action('menu-retime', openRetimeDialog)
 
 // —— 批量编辑 ——
 const batchDialog = $('batch-dialog')
@@ -4841,6 +4763,7 @@ function toggleMarker() {
       project.markers.sort((left, right) => left - right)
     }
   })
+  updateMarkerButton()
   status(index >= 0 ? '已删除播放头处的标记' : '已在播放头处添加标记')
 }
 function deleteCurrentTrack() {
@@ -5644,6 +5567,7 @@ bindComposition({
     height: isSolid() ? solidMedia.height : video.videoHeight,
     duration: isSolid() ? solidMedia.duration / 1000 : video.duration,
     solid: isSolid() ? solidMedia : null,
+    token: isSolid() ? null : waveformMedia?.token ?? null,
     pause: pausePlayback,
   }),
 })

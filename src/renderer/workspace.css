@@ -517,6 +517,16 @@ dialog .dialog-actions button.primary:hover:not(:disabled) { background: var(--a
 #composition-source { overflow-wrap: anywhere; }
 #composition-info, .composition-options small { color: var(--muted); font-size: 11px; }
 #composition-info:empty, #composition-message:empty { display: none; }
+#composition-meta { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+#composition-meta dt { color: var(--text-strong); font-weight: 600; }
+#composition-meta dd { margin: 0; overflow-wrap: anywhere; }
+.bitrate-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.bitrate-row input[type=range] { flex: 1; min-width: 80px; accent-color: var(--accent); }
+.bitrate-row input[type=number] { width: 78px; }
+#composition-hdr-info { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.composition-tonemap { display: flex; align-items: flex-start; gap: 8px; }
+.composition-section .composition-tonemap input { width: 15px; height: 15px; min-width: 15px; min-height: 15px; margin-top: 3px; flex: 0 0 auto; }
+.composition-tonemap .settings-text { display: grid; gap: 2px; }
 .composition-options { min-width: 0; border: 0; margin: 0; padding: 0; display: grid; gap: 12px; }
 .composition-section { border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 6px; }
 .composition-section h3 { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 3px; font-size: 13px; }
@@ -707,6 +717,10 @@ input[type=number] { appearance: textfield; }
 .icon:has(use[href="#i-wave-asymmetric"]) { -webkit-mask-image: url("../assets/icons/wave-asymmetric.svg"); mask-image: url("../assets/icons/wave-asymmetric.svg"); }
 .icon:has(use[href="#i-wave-off"]) { -webkit-mask-image: url("../assets/icons/wave-off.svg"); mask-image: url("../assets/icons/wave-off.svg"); }
 .icon:has(use[href="#i-unlock"]) { -webkit-mask-image: url("../assets/icons/unlock.svg"); mask-image: url("../assets/icons/unlock.svg"); }
+.icon:has(use[href="#i-save-as"]) { -webkit-mask-image: url("../assets/icons/save-as.svg"); mask-image: url("../assets/icons/save-as.svg"); }
+.icon:has(use[href="#i-search"]) { -webkit-mask-image: url("../assets/icons/search-01.svg"); mask-image: url("../assets/icons/search-01.svg"); }
+.icon:has(use[href="#i-marker-remove"]) { -webkit-mask-image: url("../assets/icons/marker-remove.svg"); mask-image: url("../assets/icons/marker-remove.svg"); }
+#toggle-marker.remove-marker { color: #ff6b6b; }
 .menu-popup button:hover:not(:disabled) .icon, .menu-popup button:focus-visible .icon { color: inherit; }
 
 

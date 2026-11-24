@@ -9,7 +9,7 @@
 
 ## 1. 结论摘要
 
-整体设计语言已经成型：深色中性灰面板、8px 面板圆角、6px 控件圆角、蓝色主色 `#173E76`、橙色字幕块、等宽时间码、紧凑桌面密度。工程态工作区、菜单、样式编辑器、合成视频弹窗的完成度较高，83 个单测与 396 条桌面 PASS 提供了良好的回归保护。
+整体设计语言已经成型：深色中性灰面板、8px 面板圆角、6px 控件圆角、蓝色主色 `#173E76`、橙色字幕块、等宽时间码、紧凑桌面密度。工程态工作区、菜单、样式编辑器、合成视频弹窗的完成度较高，80 个单测与 394 条桌面 PASS 提供了良好的回归保护。
 
 本轮截图审计暴露的主要问题不是“不好看”，而是三类可用性缺口：
 
@@ -17,7 +17,7 @@
 2. **关键状态不可见**：待校对入口同样藏在隐藏节点池；标尺、缩放条、字幕块没有键盘焦点环；错误与普通提示共用同一种状态栏颜色；选中字幕只靠 1.34:1 的红框。
 3. **专业字幕工作流缺反馈**：选中字幕时看不到时长、语速、链接状态；样式预览文字会被面板右侧裁掉；缺失媒体只能看到一行“原视频不可用”，没有恢复入口。
 
-第 1 轮修复 12 项（见 §4），其中 4 项属于公测阻断级；第 2 轮新增整体平移与查找替换（见 §3.8）；第 3 轮新增自动保存与崩溃恢复（见 §3.11）；第 4 轮新增双语合并导出（见 §3.10）；第 5 轮新增质量检查（见 §3.12）；第 6 轮新增文本工具（见 §3.13）；第 7 轮新增 WebVTT 导入/导出（见 §3.14）；第 8 轮新增编码/换行与 SSA v4（见 §3.15）；第 16 轮新增时间码格式（见 §3.16）；第 17 轮新增帧率转换（见 §3.17）；第 18 轮新增批量导出与预设（见 §3.18）；第 19 轮新增工程字体检查（见 §3.19）；第 20 轮记录 5000 块性能基线（见 §3.20）；第 21 轮新增拼写检查（见 §3.21）；第 22 轮新增校对进度（见 §3.22）；第 24 轮新增批量编辑（见 §3.23）。剩余问题按 P0/P1/P2 列入 §5，并同步到 `docs/PUBLIC-BETA-PLAN.md`。
+第 1 轮修复 12 项（见 §4），其中 4 项属于公测阻断级；第 2 轮新增整体平移与查找替换（见 §3.8）；第 3 轮新增自动保存与崩溃恢复（见 §3.11）；第 4 轮新增双语合并导出（见 §3.10）；第 5 轮新增质量检查（见 §3.12）；第 6 轮新增文本工具（见 §3.13）；第 7 轮新增 WebVTT 导入/导出（见 §3.14）；第 8 轮新增编码/换行与 SSA v4（见 §3.15）；第 16 轮新增时间码格式（见 §3.16）；第 17 轮帧率转换已在第 52 轮按用户要求移除；第 18 轮新增批量导出与预设（见 §3.18）；第 19 轮新增工程字体检查（见 §3.19）；第 20 轮记录 5000 块性能基线（见 §3.20）；第 21 轮新增拼写检查（见 §3.21）；第 22 轮新增校对进度（见 §3.22）；第 24 轮新增批量编辑（见 §3.23）。剩余问题按 P0/P1/P2 列入 §5，并同步到 `docs/PUBLIC-BETA-PLAN.md`。
 
 ## 2. 截图覆盖
 
@@ -41,11 +41,11 @@
 | 崩溃恢复 | 自动保存恢复对话框 | `round3/01-recovery-dialog.png`、`round3/04-inline-draft-recovered.png` |
 | 双语合并导出 | 导出对话框合并选项与示例 | `round4/01-merge-export.png` |
 | 质量检查 | QC 标签、阈值、问题列表与批量修复 | `round5/01-qc-panel.png` |
+| 合成视频 | 源信息、码率、HDR/转 SDR、音频模式 | `round52/02-hdr-composition-checkbox.png` |
 | 文本工具 | 批量大小写与空格清理 | `round6/01-text-tools.png` |
 | WebVTT | 导出对话框 WebVTT 选项 | `round7/01-vtt-export.png` |
 | 编码/换行 | 导出对话框编码与换行选择 | `round8/01-export-encoding.png` |
 | 时间码 | 项目设置时间码格式 | `round16/01-timecode-settings.png` |
-| 帧率转换 | 转换帧率弹窗 | `round17/01-retime-dialog.png` |
 | 批量导出 | 全部轨道导出与预设 | `round18/01-batch-export.png` |
 | 字体检查 | 工程字体缺失弹窗 | `round19/01-font-check.png` |
 | 5000 块时间轴 | 密集时间轴与可见节点 | `round20/01-dense-timeline.png` |
@@ -149,14 +149,23 @@
 - 规则：上轨在前、时间取交集；无重叠按上轨时间并计数；未链接字幕保留单行。ASS 导出时 ASS 轨道取上轨样式，纯文本轨道使用项目默认样式；SRT 导出自动去掉 ASS 覆盖标签，同时保留纯文本里的花括号与反斜杠。
 - 已知限制：只合并链接数最多的那一条对端轨道；多条对端轨道需要分次导出；合并结果不写回工程。
 
+### 3.26 合成视频面板（第 52 轮重构）
+
+- 源信息列出容器、分辨率、帧率、色彩空间、HDR 类型（HDR10/HDR10+/Dolby Vision/HLG）和音轨格式（AAC/DTS/TrueHD/E-AC-3 等）。
+- 移除分辨率/帧率转换；视频码率通过滑块 + 数值输入自定义（Mbps）。
+- 输出默认沿用源视频容器（MP4/MOV/MKV）；音频可选重编码 AAC 或直接复制音频流。
+- HDR 源自动提示并切到 HEVC；可勾选「转 SDR」输出 BT.709，不勾选保留 10-bit HDR 标记。
+- 截图：`out/ui-audit/round52/02-hdr-composition-checkbox.png`。
+- 已知限制：WebM 源暂不直接输出 WebM；音频复制是否成功取决于目标容器是否支持源音频编码。
+
 ### 3.25 SVG 图标体系（第 44 轮新增）
 
 - UI 图标全部切换为 SVG mask，删除 `src/assets/icons/*.png`（49 个旧 PNG）。
-- 新图标集 69 个原始 SVG 全部落入 `src/assets/icons/`，49 个 `#i-*` 语义名使用 SVG 别名。
+- 新图标集 69 个原始 SVG 全部落入 `src/assets/icons/`，52 个 `#i-*` 语义名使用 SVG 别名。
 - 渲染链路：`<use href="#i-*">` → CSS `mask-image: url(icons/*.svg)`；颜色继续跟随 `currentColor`。
-- 49 个内联 `<symbol>` 的路径也已替换为新 SVG 内容，避免旧图标路径残留。
-- 打包验证：`app.asar` 内 `subx://app/assets/icons/play.svg` 可加载，桌面 smoke 396 条 PASS。
-- 截图：`out/ui-audit/round44/01-svg-icons.png`、`round44/02-packaged-svg-icons.png`；49 个语义图标画廊见 `round45/01-icon-gallery.png`，69 个原始 SVG 总览见 `round46/01-icon-library.png`；菜单/关于/快捷键复核见 `round47/01-file-menu.png`、`02-edit-menu.png`、`03-export-menu.png`、`04-about-dialog.png`、`05-shortcuts.png`。
+- 52 个内联 `<symbol>` 的路径也已替换为新 SVG 内容，避免旧图标路径残留。
+- 打包验证：`app.asar` 内 `subx://app/assets/icons/play.svg` 可加载，桌面 smoke 394 条 PASS。
+- 截图：`out/ui-audit/round44/01-svg-icons.png`、`round44/02-packaged-svg-icons.png`；52 个语义图标画廊见 `round45/01-icon-gallery.png`，69 个原始 SVG 总览见 `round46/01-icon-library.png`；菜单/关于/快捷键复核见 `round47/01-file-menu.png`、`02-edit-menu.png`、`03-export-menu.png`、`04-about-dialog.png`、`05-shortcuts.png`。
 - 规范：`src/assets/icons/README.md`；品牌字标/应用图标不属于 UI 图标集。
 
 ### 3.24 辅助功能可访问性（第 36 轮新增）
@@ -212,12 +221,10 @@
 - 截图：`out/ui-audit/round18/01-batch-export.png`。
 - 已知限制：批量导出不生成 ZIP；目标文件夹需可写。
 
-### 3.17 帧率转换（第 17 轮新增）
+### 3.17 帧率转换（第 17 轮新增，第 52 轮移除）
 
-- 编辑菜单新增「转换帧率…」：源帧率、目标帧率、范围（全部轨道 / 当前轨道及链接 / 选中及链接）。
-- 按目标/源比例缩放每条字幕起止；链接字幕一起缩放，转换一次撤销；至少保留 1ms 时长。
-- 截图：`out/ui-audit/round17/01-retime-dialog.png`。
-- 已知限制：转换只改字幕时间，不改变源视频帧率；非丢帧预览沿用应用既有 `HH:MM:SS.FF`。
+- 该功能已按用户要求从编辑菜单、弹窗和代码中删除，避免与视频合成/时间码职责混淆。
+- 历史截图：`out/ui-audit/round17/01-retime-dialog.png`。
 
 ### 3.16 时间码格式（第 16 轮新增）
 
@@ -289,7 +296,7 @@
 | UX-13 | 整体平移缺失 | 编辑菜单 + 对话框 + `shiftTiming/clampShiftDelta` 纯函数 | `index.html` 编辑菜单、`workspace.mjs` 整体平移段、`core/project.mjs` |
 | UX-14 | 查找替换缺失 | 编辑菜单 + 非模态浮层 + `core/text.mjs` | `index.html` find-panel、`workspace.mjs` 查找段、`core/text.mjs` |
 
-回归：`npm test` 83/83 通过；`npm run test:desktop` 396 条 PASS（第 2 轮新增整体平移/查找替换的菜单与行为断言，见 `scripts/desktop-smoke/scenario.mjs`）。
+回归：`npm test` 80/80 通过；`npm run test:desktop` 394 条 PASS（第 2 轮新增整体平移/查找替换的菜单与行为断言，见 `scripts/desktop-smoke/scenario.mjs`）。
 
 ## 5. 剩余问题清单
 
@@ -373,8 +380,8 @@
 ## 7. 验收方式
 
 - 截图回归：空态、工程态、字幕编辑、样式编辑器、缺失媒体、255px 检查器、1024×700 共 7 张基准图（`out/ui-audit/final/`）。
-- 桌面 smoke：396 条 PASS；第 1 轮调整 4 条既有断言、新增 4 条覆盖；第 2 轮新增编辑菜单、整体平移、查找替换与 ⌘F；第 4 轮新增双语合并导出（含实际写文件与双行校验）；第 5 轮新增质量检查标签页；第 6 轮新增文本工具标签页；第 7 轮新增 WebVTT 导入/导出；第 8 轮新增编码/换行与 SSA v4。
-- 单元测试：83/83（新增 `test/text.test.mjs` 7 条、`test/timing.test.mjs` 3 条、`test/merge.test.mjs` 9 条、`test/qc.test.mjs` 5 条、`test/text-tools.test.mjs` 4 条、`test/vtt.test.mjs` 3 条、`test/encoding.test.mjs` 3 条、`test/ssa.test.mjs` 1 条、`test/windows-association.test.mjs` 3 条、`test/timecode.test.mjs` 5 条、`test/retime.test.mjs` 3 条、`test/fonts.test.mjs` 2 条、`test/review.test.mjs` 2 条、`test/batch-edit.test.mjs` 2 条）。
+- 桌面 smoke：394 条 PASS；第 1 轮调整 4 条既有断言、新增 4 条覆盖；第 2 轮新增编辑菜单、整体平移、查找替换与 ⌘F；第 4 轮新增双语合并导出（含实际写文件与双行校验）；第 5 轮新增质量检查标签页；第 6 轮新增文本工具标签页；第 7 轮新增 WebVTT 导入/导出；第 8 轮新增编码/换行与 SSA v4。
+- 单元测试：80/80（新增 `test/text.test.mjs` 7 条、`test/timing.test.mjs` 3 条、`test/merge.test.mjs` 9 条、`test/qc.test.mjs` 5 条、`test/text-tools.test.mjs` 4 条、`test/vtt.test.mjs` 3 条、`test/encoding.test.mjs` 3 条、`test/ssa.test.mjs` 1 条、`test/windows-association.test.mjs` 3 条、`test/timecode.test.mjs` 5 条、`test/fonts.test.mjs` 2 条、`test/review.test.mjs` 2 条、`test/batch-edit.test.mjs` 2 条）。
 - 崩溃恢复手工验证：编辑后 6.5 秒生成 autosave；SIGKILL 主进程后重启弹出恢复对话框；恢复 cue 表单草稿与内联编辑器草稿；保存/退出丢弃后 autosave 消失。
-- 桌面 smoke：396 条 PASS（含撤销/重做、保存、退出丢弃路径），exit 0。
+- 桌面 smoke：394 条 PASS（含撤销/重做、保存、退出丢弃路径），exit 0。
 - 后续每轮 UI 改动至少覆盖：空态、工程态、错误态、窄窗口四类截图，并跑一次桌面 smoke。

@@ -50,6 +50,78 @@ export function bindComposition({ project, currentTrack, hasDraft, report, media
   const progress = get('composition-progress')
   const scope = form.elements.scope
   let running = false
+  let probeInfo = null
+  let probeToken = null
+  let probePending = false
+  const bitrateRange = get('composition-bitrate-range')
+  const bitrateNumber = get('composition-bitrate')
+  function syncBitrate(value, source) {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) return
+    const clamped = Math.max(1, Math.min(100, Math.round(parsed * 2) / 2))
+    if (source !== 'range') bitrateRange.value = String(Math.max(1, Math.min(100, Math.round(clamped))))
+    if (source !== 'number') bitrateNumber.value = String(clamped)
+  }
+  bitrateRange.addEventListener('input', () => syncBitrate(bitrateRange.value, 'range'))
+  bitrateNumber.addEventListener('input', () => syncBitrate(bitrateNumber.value, 'number'))
+  function syncAudioMode() {
+    get('composition-audio-bitrate-row').hidden = form.elements.audioMode.value === 'copy'
+  }
+  form.elements.audioMode.addEventListener('change', syncAudioMode)
+  function syncHdrCodec() {
+    const preserve = Boolean(probeInfo?.video?.hdr && !get('composition-tonemap').checked)
+    const option = form.elements.codec.querySelector('option[value=h264]')
+    if (option) option.disabled = preserve
+    if (preserve) form.elements.codec.value = 'hevc'
+  }
+  get('composition-tonemap').addEventListener('change', syncHdrCodec)
+  function renderProbe(meta, pending) {
+    const list = get('composition-meta')
+    list.replaceChildren()
+    if (!meta) {
+      get('composition-hdr').hidden = true
+      get('composition-container').textContent = '源容器'
+      get('composition-audio-info').textContent = ''
+      syncHdrCodec()
+      if (pending) {
+        const dt = document.createElement('dt')
+        const dd = document.createElement('dd')
+        dt.textContent = '源信息'
+        dd.textContent = '正在读取…'
+        list.append(dt, dd)
+      }
+      return
+    }
+    const video = meta.video ?? {}
+    const audio = meta.audio ?? {}
+    const color = [video.colorSpace, video.colorTransfer, video.colorPrimaries].filter(Boolean).join(' / ') || '未标记'
+    const hdr = video.hdr
+    const rows = [
+      ['容器', meta.container ? meta.container.toUpperCase() : '未知'],
+      ['视频', [video.codec?.toUpperCase(), video.width && video.height ? video.width + ' × ' + video.height : '', video.fps ? video.fps + ' fps' : ''].filter(Boolean).join(' · ') || '未知'],
+      ['色彩', color],
+      ['HDR', hdr ? video.hdrKind : 'SDR'],
+      ['音轨', audio.codec ? audio.label + (audio.layout ? ' · ' + audio.layout : audio.channels ? ' · ' + audio.channels + ' 声道' : '') + (audio.atmos ? ' · Dolby Atmos' : '') : '无音轨'],
+    ]
+    for (const [label, value] of rows) {
+      const dt = document.createElement('dt')
+      const dd = document.createElement('dd')
+      dt.textContent = label
+      dd.textContent = value
+      list.append(dt, dd)
+    }
+    get('composition-container').textContent = meta.container ? meta.container.toUpperCase() : '源容器'
+    get('composition-hdr').hidden = !hdr
+    get('composition-hdr-info').textContent = hdr
+      ? '源视频为 ' + video.hdrKind + '，色彩标记 ' + color + '。保留 HDR 时会输出 10-bit；勾选转 SDR 后使用 BT.709。'
+      : ''
+    if (!hdr) get('composition-tonemap').checked = false
+    syncHdrCodec()
+    get('composition-audio-info').textContent = audio.codec
+      ? '源音轨：' + audio.label + (audio.layout ? ' · ' + audio.layout : audio.channels ? ' · ' + audio.channels + ' 声道' : '') + (audio.atmos ? ' · Dolby Atmos' : '')
+      : '源视频没有音轨。'
+    syncAudioMode()
+  }
 
   function candidateTracks() {
     const active = scope.value === 'active'
@@ -70,7 +142,33 @@ export function bindComposition({ project, currentTrack, hasDraft, report, media
     const info = media()
     const ready = info.ready
     get('composition-source').textContent = ready ? info.name : '请先打开视频'
-    get('composition-info').textContent = ready ? info.width + ' × ' + info.height + ' · ' + printTime(Math.round(info.duration * 1000), '.') : ''
+    const activeProbe = info.token ? probeInfo : null
+    const width = activeProbe?.video?.width || info.width
+    const height = activeProbe?.video?.height || info.height
+    get('composition-info').textContent = ready ? width + ' × ' + height + ' · ' + printTime(Math.round(info.duration * 1000), '.') : ''
+    const token = ready ? info.token : null
+    if (!token) {
+      probeToken = null
+      probeInfo = null
+      probePending = false
+    } else if (token !== probeToken) {
+      probeToken = token
+      probeInfo = null
+      probePending = true
+      if (token) {
+        api.probeMedia(token).then(meta => {
+          if (probeToken !== token) return
+          probeInfo = meta
+          probePending = false
+          if (dialog.open) update()
+        }).catch(() => {
+          if (probeToken !== token) return
+          probePending = false
+          if (dialog.open) update()
+        })
+      }
+    }
+    renderProbe(activeProbe, probePending)
     if (!running) {
       const hasOutput = count || (project().settings?.watermark && project().settings?.watermarkImage?.path)
       message.textContent = hasDraft() ? '请先应用或取消编辑区的草稿。' : !hasOutput ? '所选范围内还没有字幕正文。' : ''
@@ -99,7 +197,8 @@ export function bindComposition({ project, currentTrack, hasDraft, report, media
     const info = media()
     const options = Object.fromEntries(new FormData(form))
     delete options.scope
-    options.crf = Number(options.crf)
+    options.bitrate = Number(options.bitrate)
+    options.tonemap = Boolean(options.tonemap)
     if (info.solid) options.solid = info.solid
     options.layers = compositionLayers(project().tracks, project().styles, project().settings,
       Math.ceil(info.duration * 100) * 10, new Set(selectedTracks().map(track => track.id)))
@@ -127,7 +226,7 @@ export function bindComposition({ project, currentTrack, hasDraft, report, media
     try {
       if (await api.composeVideo(options)) {
         dialog.close()
-        report('合成完成，MP4 视频已保存。')
+        report('合成完成，视频已保存。')
       } else {
         message.textContent = '已取消合成。'
       }

@@ -11,7 +11,6 @@
 | 文本工具 | `out/ui-audit/final2/03-text-tools.png` | 范围与 7 个文本操作布局正常 |
 | 项目设置 | `out/ui-audit/final2/04-settings.png` | 时间码/字体/校对/画面分组清晰 |
 | 导出 | `out/ui-audit/final2/05-export.png` | 合并/批量/预设/编码/换行均可见 |
-| 帧率转换 | `out/ui-audit/final2/06-retime.png` | 源/目标帧率、范围、摘要正常 |
 
 ## 本轮发现并修复
 

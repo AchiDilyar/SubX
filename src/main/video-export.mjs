@@ -20,9 +20,9 @@ function validWatermark(watermark) {
 
 export function validateComposition(options) {
   if (!options || !validWatermark(options.watermark) || !codecs.has(options.codec) || !['fast', 'medium', 'slow'].includes(options.preset) ||
-      !Number.isInteger(options.crf) || options.crf < 0 || options.crf > 51 ||
-      !['source', '720', '1080', '2160'].includes(options.height) ||
-      !['source', '24', '25', '30', '60'].includes(options.fps) || !['128', '192', '320', 'none'].includes(options.audio) ||
+      !Number.isFinite(options.bitrate) || options.bitrate < 1 || options.bitrate > 100 ||
+      !['encode', 'copy'].includes(options.audioMode) || !['128', '192', '320', 'none'].includes(options.audio) ||
+      (options.tonemap !== undefined && typeof options.tonemap !== 'boolean') ||
       (options.solid !== undefined && !isSolidMedia(options.solid)) ||
       !Array.isArray(options.layers) || options.layers.some(layer => typeof layer !== 'string' || layer.includes('\0'))) {
     throw new Error('无效的视频合成设置。')
@@ -46,34 +46,76 @@ export function bundledEncoders() {
   return list
 }
 
+// 读取源视频的容器、HDR 与音轨信息，供合成面板和编码参数使用。
+export async function probeMediaInfo(probe, source, signal) {
+  const options = { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 8 * 1024 * 1024, signal }
+  const { stdout } = await inspect(probe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', resolve(source)], options)
+  const data = JSON.parse(stdout)
+  const video = (data.streams ?? []).find(stream => stream.codec_type === 'video') ?? {}
+  const audio = (data.streams ?? []).find(stream => stream.codec_type === 'audio') ?? {}
+  const side = JSON.stringify(video.side_data_list ?? [])
+  const transfer = String(video.color_transfer ?? '').toLowerCase()
+  const primaries = String(video.color_primaries ?? '').toLowerCase()
+  const dolbyVision = /dovi|dvhe|dvh1/i.test(side + ' ' + String(video.codec_tag_string ?? ''))
+  const hdr10plus = /hdr10\+|smpte2094/i.test(side)
+  const hdr10 = !dolbyVision && !hdr10plus && transfer === 'smpte2084' && primaries === 'bt2020'
+  const hlg = transfer === 'arib-std-b67'
+  const hdr = dolbyVision || hdr10plus || hdr10 || hlg || transfer === 'smpte2084' || primaries === 'bt2020'
+  const hdrKind = dolbyVision ? 'Dolby Vision' : hdr10plus ? 'HDR10+' : hdr10 ? 'HDR10' : hlg ? 'HLG' : hdr ? 'HDR' : 'SDR'
+  const audioCodec = String(audio.codec_name ?? '').toLowerCase()
+  const channels = Number(audio.channels ?? 0)
+  const profile = String(audio.profile ?? '')
+  const audioLabel = audioCodec === 'aac' ? 'AAC'
+    : audioCodec === 'dts' ? (profile ? 'DTS · ' + profile : 'DTS')
+    : audioCodec === 'truehd' ? (profile ? 'Dolby TrueHD · ' + profile : 'Dolby TrueHD')
+    : audioCodec === 'eac3' ? 'E-AC-3'
+    : audioCodec === 'ac3' ? 'AC-3'
+    : audioCodec ? audioCodec.toUpperCase() : '无音轨'
+  const atmos = /atmos/i.test(profile + ' ' + String(audio.tags?.title ?? '')) ||
+    ((audioCodec === 'truehd' || audioCodec === 'eac3') && channels >= 8)
+  const fpsText = String(video.avg_frame_rate ?? video.r_frame_rate ?? '')
+  const [num, den] = fpsText.split('/').map(Number)
+  return {
+    container: extname(source).slice(1).toLowerCase() || String(data.format?.format_name ?? ''),
+    duration: Number(data.format?.duration ?? 0),
+    video: {
+      codec: String(video.codec_name ?? ''), width: Number(video.width ?? 0), height: Number(video.height ?? 0),
+      fps: den ? Math.round(num / den * 1000) / 1000 : 0,
+      colorSpace: String(video.color_space ?? ''), colorTransfer: transfer, colorPrimaries: primaries,
+      pixFmt: String(video.pix_fmt ?? ''), hdr, hdrKind, dolbyVision, hdr10, hdr10plus, hlg,
+    },
+    audio: { codec: audioCodec, profile, channels, layout: String(audio.channel_layout ?? ''), label: audioLabel, atmos },
+  }
+}
+
 export async function findEncoder(options, savedPath, signal, selectedPath) {
   const binary = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
   const candidates = selectedPath ? [selectedPath] :
     [process.env.SUBX_FFMPEG_PATH, savedPath, ...bundledEncoders(), ...ffmpegDirectories().map(dir => join(dir, binary))]
   const probe = { encoding: 'utf8', windowsHide: true, timeout: 5000, signal }
   for (const file of new Set(candidates)) {
-    signal.throwIfAborted()
+    signal?.throwIfAborted()
     if (!file || !isAbsolute(file) || basename(file).toLowerCase() !== binary) continue
     try {
       await access(file, constants.X_OK)
       if (!options) return file
       const { stdout } = await inspect(file, ['-hide_banner', '-encoders'], probe)
       if (!stdout.includes(' ' + codecs.get(options.codec) + ' ') ||
-          (options.audio !== 'none' && !stdout.includes(' aac '))) continue
+          (options.audioMode !== 'copy' && options.audio !== 'none' && !stdout.includes(' aac '))) continue
       if (options.layers.length) {
         const filters = await inspect(file, ['-hide_banner', '-filters'], probe)
         if (!/^\s*\S+\s+ass\s+V->V/m.test(filters.stdout)) continue
       }
       return file
     } catch {
-      signal.throwIfAborted()
+      signal?.throwIfAborted()
     }
   }
   return null
 }
 
 function runEncoder(file, args, cwd, signal, progress) {
-  signal.throwIfAborted()
+  signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     const abort = () => child.kill('SIGKILL')
@@ -109,30 +151,36 @@ async function destinationState(file, source) {
     if (error.code === 'ENOENT') return null
     throw error
   }
-  if (!info.isFile()) throw new Error('请选择普通 MP4 文件作为输出。')
+  if (!info.isFile()) throw new Error('请选择普通视频文件作为输出。')
   if (source && info.dev === source.dev && info.ino === source.ino) throw new Error('输出文件和源视频相同，请选择其他文件名。')
   return info
 }
 
-export async function encodeVideo({ binary, source, solid, destination, options, signal, progress = () => {} }) {
+export async function encodeVideo({ binary, source, solid, destination, options, sourceMeta = null, signal, progress = () => {} }) {
   validateComposition(options)
-  signal.throwIfAborted()
-  if (extname(destination).toLowerCase() !== '.mp4') throw new Error('请将输出文件保存为 .mp4。')
+  signal?.throwIfAborted()
+  const extension = extname(destination).toLowerCase()
+  if (!['.mp4', '.m4v', '.mov', '.mkv'].includes(extension)) throw new Error('请将输出文件保存为 .mp4、.mov 或 .mkv。')
+  if (sourceMeta?.video?.hdr && !options.tonemap && options.codec !== 'hevc') {
+    throw new Error('保留 HDR 需要 H.265/HEVC 编码；请选择 HEVC 或勾选转 SDR。')
+  }
   const sourceInfo = solid ? null : await stat(source, { bigint: true })
   const original = solid ? null : await destinationState(destination, sourceInfo)
   const work = await mkdtemp(join(dirname(destination), '.subx-video-'))
   try {
     const filters = []
-    if (options.fps !== 'source') filters.push('fps=' + options.fps)
-    if (options.height === 'source') filters.push('pad=ceil(iw/2)*2:ceil(ih/2)*2')
-    else filters.push('scale=-2:' + options.height)
+    if (sourceMeta?.video?.hdr && options.tonemap) {
+      // HDR → SDR：在线性光域做 tonemap，再回到 BT.709。
+      filters.push('zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p')
+    }
+    filters.push('pad=ceil(iw/2)*2:ceil(ih/2)*2')
     if (options.layers.length) {
       await mkdir(join(work, 'fonts'))
       const font = await readFile(new URL('../assets/NotoSansSC.ttf', import.meta.url))
       await writeFile(join(work, 'fonts', 'NotoSansSC.ttf'), font)
     }
     for (const [index, layer] of options.layers.entries()) {
-      signal.throwIfAborted()
+      signal?.throwIfAborted()
       const name = 'track-' + index + '.ass'
       await writeFile(join(work, name), layer)
       filters.push('ass=' + name + ':fontsdir=fonts')
@@ -158,14 +206,27 @@ export async function encodeVideo({ binary, source, solid, destination, options,
     } else {
       args.push('-map', '0:V:0', '-vf', filters.join(','))
     }
-    args.push('-c:v', codecs.get(options.codec), '-preset', options.preset,
-      '-crf', String(options.crf), '-pix_fmt', 'yuv420p')
-    if (options.codec === 'hevc') args.push('-tag:v', 'hvc1')
+    args.push('-c:v', codecs.get(options.codec), '-preset', options.preset, '-b:v', String(options.bitrate) + 'M')
+    if (sourceMeta?.video?.hdr && !options.tonemap) {
+      args.push('-pix_fmt', 'yuv420p10le')
+      for (const [flag, value] of [
+        ['-color_primaries', sourceMeta.video.colorPrimaries],
+        ['-color_trc', sourceMeta.video.colorTransfer],
+        ['-colorspace', sourceMeta.video.colorSpace],
+      ]) if (value) args.push(flag, value)
+    } else {
+      args.push('-pix_fmt', 'yuv420p')
+      if (sourceMeta?.video?.hdr && options.tonemap) args.push('-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709')
+    }
+    if (options.codec === 'hevc' && extension !== '.mkv') args.push('-tag:v', 'hvc1')
     if (solid || options.audio === 'none') args.push('-an')
+    else if (options.audioMode === 'copy') args.push('-map', '0:a:0?', '-c:a', 'copy')
     else args.push('-map', '0:a:0?', '-c:a', 'aac', '-b:a', options.audio + 'k')
-    args.push('-movflags', '+faststart', '-f', 'mp4', 'output.mp4')
+    const format = extension === '.mkv' ? 'matroska' : extension === '.mov' ? 'mov' : 'mp4'
+    if (format === 'mp4') args.push('-movflags', '+faststart')
+    args.push('-f', format, 'output' + extension)
     await runEncoder(binary, args, work, signal, progress)
-    const output = join(work, 'output.mp4')
+    const output = join(work, 'output' + extension)
     if (original && process.platform !== 'win32') await chmod(output, Number(original.mode & 0o777n))
     if (!solid) {
       const latest = await destinationState(destination, sourceInfo)
@@ -173,7 +234,7 @@ export async function encodeVideo({ binary, source, solid, destination, options,
         throw new Error('目标文件已变化，请重新选择输出文件。')
       }
     }
-    signal.throwIfAborted()
+    signal?.throwIfAborted()
     await rename(output, destination)
   } finally {
     await rm(work, { recursive: true, force: true })
@@ -186,7 +247,7 @@ export async function readWaveform(binary, source, duration, signal) {
   const stride = Math.max(80, Math.ceil(duration * rate / 24000))
   const peaks = new Float32Array(Math.ceil(duration * rate / stride))
   const demuxer = /\.(webm|mkv)$/i.test(source) ? 'matroska' : 'mov'
-  signal.throwIfAborted()
+  signal?.throwIfAborted()
   const child = spawn(binary, [
     '-hide_banner', '-nostdin', '-loglevel', 'error', '-protocol_whitelist', 'file',
     '-f', demuxer, '-i', resolve(source), '-map', '0:a:0', '-vn',
@@ -218,7 +279,7 @@ export async function readFrameTimes(savedPath, source, signal) {
     .filter(file => file && isAbsolute(file)).map(file => dirname(file))
   let probe
   for (const directory of new Set([...preferred, ...ffmpegDirectories()])) {
-    signal.throwIfAborted()
+    signal?.throwIfAborted()
     const candidate = join(directory, name)
     if (await access(candidate, constants.X_OK).then(() => true, () => false)) {
       probe = candidate

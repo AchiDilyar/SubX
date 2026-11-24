@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('subx', {
   frameTimes: token => ipcRenderer.invoke('media:frame-times', token),
   waveform: (token, duration) => ipcRenderer.invoke('media:waveform', token, duration),
   chooseMedia: () => ipcRenderer.invoke('media:choose'),
+  probeMedia: token => ipcRenderer.invoke('media:probe', token),
   finishMediaSelection: (token, accepted) => ipcRenderer.invoke('media:finish-selection', token, accepted),
   installedFonts: () => ipcRenderer.invoke('fonts:installed'),
   chooseSubtitles: () => ipcRenderer.invoke('subtitles:choose'),

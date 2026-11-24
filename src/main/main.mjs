@@ -10,18 +10,19 @@ import { decodeSubtitleText, encodeSubtitleText } from '../core/encoding.mjs'
 import { normalizeStyleNames, validateProject } from '../core/project.mjs'
 import { installedFontFamilies } from './fonts.mjs'
 import { ensureFileAssociation, registerFileAssociation, unregisterFileAssociation } from './windows-association.mjs'
-import { bundledEncoders, encodeVideo, findEncoder, readFrameTimes, readWaveform, validateComposition } from './video-export.mjs'
+import { bundledEncoders, encodeVideo, findEncoder, probeMediaInfo, readFrameTimes, readWaveform, validateComposition } from './video-export.mjs'
 
 const entry = 'subx://app/renderer/index.html'
 const appFiles = new Set([
   '/renderer/index.html', '/renderer/workspace.css', '/renderer/workspace.mjs',
   '/renderer/composition.mjs', '/renderer/ass-preview.mjs', '/assets/NotoSansSC.ttf', '/assets/SubXIcon.png', '/assets/textLOGO.png', '/assets/about-qr.svg',
-  '/core/project.mjs', '/core/srt.mjs', '/core/ass.mjs', '/core/frame-grid.mjs', '/core/text.mjs', '/core/merge.mjs', '/core/qc.mjs', '/core/text-tools.mjs', '/core/vtt.mjs', '/core/timecode.mjs', '/core/retime.mjs', '/core/fonts.mjs', '/core/review.mjs', '/core/batch-edit.mjs',
+  '/core/project.mjs', '/core/srt.mjs', '/core/ass.mjs', '/core/frame-grid.mjs', '/core/text.mjs', '/core/merge.mjs', '/core/qc.mjs', '/core/text-tools.mjs', '/core/vtt.mjs', '/core/timecode.mjs', '/core/fonts.mjs', '/core/review.mjs', '/core/batch-edit.mjs',
 ])
 const iconFiles = ["new", "folder", "recent", "save", "copy", "import", "export", "film", "monitor", "sliders", "style", "plus", "play", "pause", "undo", "redo", "track", "cue", "split", "select", "link", "snap", "eye", "eye-off", "info", "arrow", "pencil", "back", "trash", "power", "check", "keyboard", "external", "close", "lock", "expand", "collapse", "razor", "blade", "select-forward", "select-backward", "trim-start", "trim-end", "marker", "remove-track", "wave-symmetric", "wave-asymmetric", "wave-off", "unlock"].map(name => '/assets/icons/' + name + '.svg')
 for (const path of iconFiles) appFiles.add(path)
 const extraIconFiles = ["add-01","add-square","arrow-left-02","arrow-left-from-line","arrow-right-from-line","audio-wave-01","bolt","bookmark-add-01","bookmark-remove-01","cancel-01","captions-off","captions-2","captions","check","clapperboard","clock-01","command","comment-add-01","configuration-01","copy-01","cpu","cursor-magic-selection-04","delete-01","delete-02","download-02","edit-02","eye-off","file-download","file-up","folder-03","folder-add","full-screen","help-circle","info","keyboard","link-01","link","list-plus","list-x","logout-03","magnet-02","monitor-play","pause","play","preference-horizontal","redo-01","row-delete","save","scissors","search-01","search-add","search-minus","share-03","share-04","share-05","shut-down","square-arrow-right-enter","square-lock-02","square-plus","square-unlock-02","text-creation","text-smallcaps","translation","undo-03","unfold-less","unfold-more","view","volume-02","volume-off"].map(name => '/assets/icons/' + name + '.svg')
 for (const path of extraIconFiles) appFiles.add(path)
+for (const name of ['save-as', 'marker-remove', 'search']) appFiles.add('/assets/icons/' + name + '.svg')
 const require = createRequire(import.meta.url)
 const libass = dirname(require.resolve('@jellyfin/libass-wasm'))
 const libassFiles = new Set([
@@ -595,6 +596,21 @@ async function initialize() {
       if (requests.get(window) === controller) requests.delete(window)
     }
   }
+  function probeExecutable(binary) {
+    return join(dirname(binary), process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe')
+  }
+  bind('media:probe', async (window, token) => {
+    const source = media.get(token) ?? media.get(activeMedia.get(window))
+    if (!source) return null
+    const saved = await readText(encoderPreference).then(JSON.parse).catch(() => null)
+    try {
+      const binary = await findEncoder(null, typeof saved === 'string' ? saved : null)
+      if (!binary) return null
+      return await probeMediaInfo(probeExecutable(binary), source)
+    } catch {
+      return null
+    }
+  })
   bind('media:waveform', (window, token, duration) => {
     if (!Number.isFinite(duration) || duration <= 0 || duration > 86400) return null
     return analyzeMedia(window, token, waveformRequests, async (saved, source, signal) => {
@@ -624,14 +640,21 @@ async function initialize() {
     }
     signal.throwIfAborted()
     const solid = options.solid ?? null
+    let sourceMeta = null
+    if (!solid) {
+      try { sourceMeta = await probeMediaInfo(probeExecutable(binary), source, signal) } catch {}
+    }
+    const sourceExtension = solid ? '.mp4' : extname(source ?? '').toLowerCase()
+    const extension = ['.mp4', '.m4v', '.mov', '.mkv'].includes(sourceExtension) ? sourceExtension : '.mkv'
+    const containerName = extension === '.mkv' ? 'Matroska 视频' : extension === '.mov' ? 'QuickTime 视频' : 'MP4 视频'
     const base = solid ? join(app.getPath('videos'), '空白视频') : join(dirname(source), basename(source, extname(source)))
     const result = await dialog.showSaveDialog(window, {
-      title: '合成视频', defaultPath: base + ' - 字幕.mp4',
-      filters: [{ name: 'MP4 视频', extensions: ['mp4'] }],
+      title: '合成视频', defaultPath: base + ' - 字幕' + extension,
+      filters: [{ name: containerName, extensions: [extension.slice(1)] }],
     })
     if (!result.filePath || signal.aborted) return false
     if (!solid && activeMedia.get(window) !== token) throw new Error('源视频已更换，请重新开始合成。')
-    await encodeVideo({ binary, source, solid, destination: result.filePath, options, signal,
+    await encodeVideo({ binary, source, solid, destination: result.filePath, options, sourceMeta, signal,
       progress: seconds => { if (!window.isDestroyed()) window.webContents.send('video:progress', seconds) },
     })
     return true

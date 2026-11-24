@@ -247,7 +247,7 @@ async function run() {
     const nativeMenus = Menu.getApplicationMenu().items
     assert.deepEqual(nativeMenus.slice(1).map(item => item.label), ['文件', '编辑', '导出', '关于'], 'Match the native menu groups')
     const nativeEdit = nativeMenus.find(item => item.label === '编辑')
-    assert.deepEqual(nativeEdit.submenu.items.filter(item => item.type !== 'separator').map(item => item.label), ['撤销', '重做', '整体平移…', '转换帧率…', '批量编辑…', '查找与替换…'], 'Expose undo, redo, shift, retime, batch edit and find in the native edit menu')
+    assert.deepEqual(nativeEdit.submenu.items.filter(item => item.type !== 'separator').map(item => item.label), ['撤销', '重做', '整体平移…', '批量编辑…', '查找与替换…'], 'Expose undo, redo, shift, batch edit and find in the native edit menu')
   }
   if (process.env.SUBX_SCREENSHOT_PATH) await captureScreenshot(process.env.SUBX_SCREENSHOT_PATH)
   assert(await exec('!document.querySelector("#empty-actions").hidden && !document.querySelector("#empty-timeline").hidden'), 'Show first-run actions and the empty timeline hint')
@@ -260,16 +260,12 @@ async function run() {
   await expect('document.querySelector("#menu-file-popup").hidden && document.querySelector("#menu-file").getAttribute("aria-expanded") === "false"', 'close the file menu when clicking outside')
   await click('menu-edit')
   await expect('!document.querySelector("#menu-edit-popup").hidden', 'open the edit menu')
-  assert.deepEqual(await exec('[...document.querySelectorAll("#menu-edit-popup button")].map(button => button.id)'), ['menu-undo', 'menu-redo', 'menu-shift', 'menu-retime', 'menu-batch', 'menu-find'], 'Expose undo, redo, shift, retime, batch edit and find in the edit menu')
+  assert.deepEqual(await exec('[...document.querySelectorAll("#menu-edit-popup button")].map(button => button.id)'), ['menu-undo', 'menu-redo', 'menu-shift', 'menu-batch', 'menu-find'], 'Expose undo, redo, shift, batch edit and find in the edit menu')
   await click('menu-shift')
   await expect('document.querySelector("#shift-dialog").open', 'open the shift dialog from the edit menu')
   await exec('document.querySelector("#shift-cancel").click()')
   await expect('!document.querySelector("#shift-dialog").open', 'close the shift dialog')
   await click('menu-edit')
-  await click('menu-retime')
-  await expect('document.querySelector("#retime-dialog").open && document.querySelectorAll("#retime-source option").length > 5', 'open the frame-rate conversion dialog')
-  await exec('document.querySelector("#retime-cancel").click()')
-  await expect('!document.querySelector("#retime-dialog").open', 'close the frame-rate conversion dialog')
   await click('menu-edit')
   await click('menu-batch')
   await expect('document.querySelector("#status").textContent.includes("至少两条字幕")', 'require a multi-selection for batch editing')
@@ -349,7 +345,7 @@ async function run() {
       const loads = await Promise.all(ids.map(async id => [id, (await fetch('../assets/icons/' + id + '.svg')).ok]))
       return { failures, missing: loads.filter(([, ok]) => !ok).map(([id]) => id), count: ids.length }
     })()`)
-    assert.equal(iconAudit.count, 49, 'Cover every existing icon symbol')
+    assert.equal(iconAudit.count, 52, 'Cover every existing icon symbol')
     assert.deepEqual(iconAudit.failures, [], 'Give every visible icon a colorable mask')
     assert.deepEqual(iconAudit.missing, [], 'Load every icon asset through the app protocol')
     const inherited = await exec(`(() => { const icon = document.querySelector('#select-tool .icon'); const old = icon.style.color; icon.style.color = 'rgb(23, 62, 118)'; const ok = getComputedStyle(icon).backgroundColor === 'rgb(23, 62, 118)'; icon.style.color = old; return ok })()`)
@@ -416,7 +412,7 @@ async function run() {
   assert.deepEqual(timelineLayout.actions, ['add-cue', 'undo', 'redo', 'split-cue', 'trim-start', 'trim-end', 'timeline-delete', 'toggle-marker'], 'Lay out the instant actions in the timeline header')
   assert.deepEqual(timelineLayout.states, ['snap-tool', 'waveform-mode'], 'Lay out the timeline state toggles on the right')
   assert(timelineLayout.addTrack, 'Place an icon-only add-track button in the timeline heading row')
-  assert.deepEqual(timelineLayout.editItems, ['menu-undo', 'menu-redo', 'menu-shift', 'menu-retime', 'menu-batch', 'menu-find'], 'Keep the edit menu limited to undo, redo, shift, retime, batch edit and find')
+  assert.deepEqual(timelineLayout.editItems, ['menu-undo', 'menu-redo', 'menu-shift', 'menu-batch', 'menu-find'], 'Keep the edit menu limited to undo, redo, shift, batch edit and find')
   assert.equal(await exec('document.querySelector("#snap-tool").getAttribute("aria-pressed")'), 'true', 'Enable snapping by default')
   assert.equal(await exec('document.querySelector("#waveform-mode").getAttribute("aria-pressed")'), 'true', 'Show the waveform by default')
   assert.equal(await exec('document.querySelector("#waveform-mode").title.includes("对称")'), true, 'Start with the symmetric waveform')
@@ -444,8 +440,9 @@ async function run() {
   await expect(`document.querySelector('#waveform').hidden === false && document.querySelector('#waveform-mode').title.includes('对称')`, 'restore the symmetric waveform')
   await click('toggle-marker')
   await expect('document.querySelectorAll("#ruler .marker").length === 1 && document.querySelector("#status").textContent.includes("标记")', 'add a timeline marker at the playhead')
+  await expect('document.querySelector("#toggle-marker").classList.contains("remove-marker") && document.querySelector("#toggle-marker use").getAttribute("href") === "#i-marker-remove" && getComputedStyle(document.querySelector("#toggle-marker")).color === "rgb(255, 107, 107)"', 'switch the marker button to remove mode in red')
   await click('toggle-marker')
-  await expect('document.querySelectorAll("#ruler .marker").length === 0', 'remove the marker at the playhead')
+  await expect('document.querySelectorAll("#ruler .marker").length === 0 && !document.querySelector("#toggle-marker").classList.contains("remove-marker")', 'remove the marker at the playhead')
   assert.equal(await exec('getComputedStyle(document.body).userSelect'), 'none', 'Disable native text selection in the app chrome')
   await expect("(() => { const event = new DragEvent('dragstart', { bubbles: true, cancelable: true }); document.querySelector('#status').dispatchEvent(event); return event.defaultPrevented })()", 'Block native text dragging in the app chrome')
   await expect("(() => { const event = new DragEvent('dragstart', { bubbles: true, cancelable: true }); document.querySelector('#cue-text').dispatchEvent(event); return !event.defaultPrevented })()", 'Keep native text dragging inside editable fields')
@@ -981,6 +978,7 @@ async function run() {
   })()`)
   assert(offscreenAfter.scale < offscreenZoom.scale && Math.abs(offscreenAfter.leftTime - offscreenZoom.leftTime) <= 3, 'Anchor zoom on the leftmost visible time when the playhead is off-screen: ' + JSON.stringify({ offscreenZoom, offscreenAfter }))
   await exec('document.querySelector("video").currentTime = 2')
+  await exec('document.activeElement?.blur()')
   await delay(150)
   const nudgeRuler = async (key, modifiers) => {
     const params = { key, code: key, modifiers, windowsVirtualKeyCode: key === 'ArrowLeft' ? 37 : 39 }
@@ -1215,8 +1213,12 @@ async function run() {
   await expect('document.querySelector("#project-stats").textContent.endsWith("3 条字幕") && document.querySelector(".cue").textContent.includes("你好")', 'import a UTF-16LE bilingual SRT via preload')
   await click('compose-video')
   await expect("!document.querySelector('#composition-start').disabled && document.querySelector('#composition-cues').textContent.includes('3 条非空字幕')", 'prepare visible subtitles and source metadata for composition')
+  assert(await exec('document.querySelector("#composition-bitrate").value === "8" && document.querySelector("#composition-form").elements.audioMode.value === "encode"'), 'expose custom bitrate and audio mode in composition')
+  await exec('(() => { const mode = document.querySelector("#composition-form").elements.audioMode; mode.value = "copy"; mode.dispatchEvent(new Event("change", { bubbles: true })) })()')
+  assert(await exec('document.querySelector("#composition-audio-bitrate-row").hidden'), 'hide the AAC bitrate when copying the audio stream')
+  await exec('(() => { const mode = document.querySelector("#composition-form").elements.audioMode; mode.value = "encode"; mode.dispatchEvent(new Event("change", { bubbles: true })) })()')
   if (process.env.SUBX_FFMPEG_PATH) {
-    await exec("const fields = document.querySelector('#composition-form').elements; fields.height.value = '720'; fields.fps.value = '24'; fields.preset.value = 'fast'")
+    await exec("const fields = document.querySelector('#composition-form').elements; fields.bitrate.value = '8'; fields.preset.value = 'fast'; fields.audioMode.value = 'encode'")
     await click('composition-start')
     await expect("!document.querySelector('#composition-dialog').open && document.querySelector('#status').textContent.includes('合成完成')", 'encode a subtitled video through the composition dialog')
     assert((await stat(join(directory, 'burned.mp4'))).size > 1000)
@@ -1982,9 +1984,13 @@ async function run() {
   assert.notEqual(blankTime, '00:00:00.00', 'Advance the playhead while the blank video plays')
 
   await click('compose-video')
-  await expect(`document.querySelector('#composition-dialog').open &&
-    document.querySelector('#composition-source').textContent.includes('空白视频') &&
-    document.querySelector('#composition-info').textContent.includes('1280 × 720')`, 'describe the blank video in the composition dialog')
+  const blankComp = await exec(`(() => ({ open: document.querySelector('#composition-dialog').open,
+    source: document.querySelector('#composition-source').textContent,
+    info: document.querySelector('#composition-info').textContent,
+    meta: document.querySelector('#composition-meta').textContent,
+    message: document.querySelector('#composition-message').textContent }))()`)
+  assert(blankComp.open && blankComp.source.includes('空白视频') && blankComp.info.includes('1280 × 720'),
+    'describe the blank video in the composition dialog: ' + JSON.stringify(blankComp))
   await exec('document.querySelector("#composition-cancel").click()')
 
   saves.unshift('blank.subx')
