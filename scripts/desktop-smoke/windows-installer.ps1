@@ -25,8 +25,20 @@ try {
         if (!$bundled) { throw "Bundled $tool missing under $root" }
     }
 
-    node scripts/desktop-smoke/installed-lite.mjs $app
-    if ($LASTEXITCODE -ne 0) { throw "Installed SubX smoke test failed" }
+    $profile = Join-Path $env:TEMP ("subx-installed-" + [guid]::NewGuid().ToString('N'))
+    $process = Start-Process -FilePath $app -ArgumentList "--user-data-dir=$profile" -PassThru
+    Start-Sleep -Seconds 6
+    if ($process.HasExited) { throw "Installed SubX exited immediately with code $($process.ExitCode)" }
+    Stop-Process -Id $process.Id -Force
+    Remove-Item $profile -Recurse -Force -ErrorAction SilentlyContinue
+
+    # 验证随包 FFmpeg 能独立完成 H.264 编码。
+    $ffmpeg = Get-ChildItem $root -Recurse -Filter 'ffmpeg.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (!$ffmpeg) { throw 'Bundled ffmpeg.exe missing' }
+    $encoded = Join-Path $env:TEMP ("subx-ffmpeg-" + [guid]::NewGuid().ToString('N') + '.mp4')
+    & $ffmpeg.FullName -hide_banner -loglevel error -f lavfi -i 'color=c=blue:s=320x240:d=1' -c:v libx264 -y $encoded
+    if ($LASTEXITCODE -ne 0 -or !(Test-Path $encoded -PathType Leaf)) { throw 'Bundled FFmpeg failed to encode H.264' }
+    Remove-Item $encoded -Force
 
     $association = Get-ItemProperty 'HKCU:\Software\Classes\.subx' -ErrorAction Stop
     if ($association.'(default)' -ne 'SubX.Project') { throw "Unexpected .subx association: $($association.'(default)')" }
