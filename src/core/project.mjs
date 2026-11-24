@@ -108,6 +108,9 @@ export function validateProject(project) {
         (!Number.isFinite(project.settings.fadeDuration) || project.settings.fadeDuration < 0 || project.settings.fadeDuration > 2000)))) {
     throw new Error('工程设置无效')
   }
+  if (project.settings?.spellcheck !== undefined && typeof project.settings.spellcheck !== 'boolean') {
+    throw new Error('工程中的拼写检查设置无效')
+  }
   const timecodeFormat = project.settings?.timecodeFormat
   if (timecodeFormat !== undefined && !['milliseconds', 'frames', 'drop'].includes(timecodeFormat)) {
     throw new Error('工程中的时间码格式无效')

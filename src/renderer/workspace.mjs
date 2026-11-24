@@ -1116,6 +1116,7 @@ function render() {
   renderStyleList(true)
   for (const key of ['fade', 'watermark']) $('project-' + key).checked = Boolean(project.settings?.[key])
   $('project-timecode-format').value = project.settings?.timecodeFormat ?? 'frames'
+  applySpellcheckSetting()
   $('project-fade-duration').value = String(project.settings?.fadeDuration ?? 100)
   $('fade-duration-field').hidden = !project.settings?.fade
   const watermarkImage = project.settings?.watermarkImage
@@ -4525,6 +4526,20 @@ $('project-fade-duration').addEventListener('change', event => {
 $('project-timecode-format').addEventListener('change', event => {
   edit(() => {
     project.settings = { fade: false, watermark: false, fadeDuration: 100, ...project.settings, timecodeFormat: event.target.value }
+  })
+})
+function applySpellcheckSetting() {
+  const enabled = project.settings?.spellcheck !== false
+  $('project-spellcheck').checked = enabled
+  $('cue-text').spellcheck = enabled
+  if (editorText) editorText.spellcheck = enabled
+}
+$('project-spellcheck').addEventListener('change', event => {
+  const enabled = event.target.checked
+  $('cue-text').spellcheck = enabled
+  if (editorText) editorText.spellcheck = enabled
+  edit(() => {
+    project.settings = { fade: false, watermark: false, fadeDuration: 100, ...project.settings, spellcheck: enabled }
   })
 })
 action('check-fonts', async () => {

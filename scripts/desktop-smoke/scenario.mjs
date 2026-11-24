@@ -129,6 +129,7 @@ async function run() {
   await expect('document.querySelector("#font-check-dialog").open && document.querySelector("#font-check-summary").textContent.length > 0', 'open the font check dialog', 30000)
   await exec('document.querySelector("#font-check-dialog button").click()')
   await expect('!document.querySelector("#font-check-dialog").open', 'close the font check dialog')
+  await expect('document.querySelector("#project-spellcheck").checked && document.querySelector("#cue-text").spellcheck === true', 'enable native spellcheck for cue text by default')
   await expect('getComputedStyle(document.querySelector("#styles-tab .icon")).color !== "rgb(255, 255, 255)"', 'Keep inactive tab icons muted')
   await click('styles-tab')
   await click('qc-tab')

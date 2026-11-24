@@ -225,6 +225,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      spellcheck: true,
     },
   })
   if (process.platform === 'darwin') {
@@ -232,6 +233,22 @@ function createWindow() {
     Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenu))
   }
   const { session } = window.webContents
+  try {
+    if (session.availableSpellCheckerLanguages.includes('en-US')) session.setSpellCheckerLanguages(['en-US'])
+  } catch {}
+  window.webContents.on('context-menu', (_event, params) => {
+    if (!params.isEditable || !params.misspelledWord) return
+    const suggestions = params.dictionarySuggestions.slice(0, 6).map(word => ({
+      label: word,
+      click: () => window.webContents.replaceMisspelling(word),
+    }))
+    const template = suggestions.length ? suggestions : [{ label: '没有拼写建议', enabled: false }]
+    template.push(
+      { type: 'separator' },
+      { label: '添加到词典', click: () => session.addWordToSpellCheckerDictionary(params.misspelledWord) },
+    )
+    Menu.buildFromTemplate(template).popup({ window })
+  })
   const canReadFonts = (contents, permission, details) => permission === 'local-fonts' &&
     contents?.getURL() === entry && details.isMainFrame && details.requestingUrl === entry
   session.setPermissionCheckHandler((contents, permission, _origin, details) => canReadFonts(contents, permission, details))
