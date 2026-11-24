@@ -5150,7 +5150,15 @@ window.addEventListener('beforeunload', event => {
     event.returnValue = false
   }
 })
-scroll.addEventListener('scroll', renderViewport, { passive: true })
+let viewportFrame = 0
+function scheduleViewport() {
+  if (viewportFrame) return
+  viewportFrame = requestAnimationFrame(() => {
+    viewportFrame = 0
+    renderViewport()
+  })
+}
+scroll.addEventListener('scroll', scheduleViewport, { passive: true })
 $('zoom').addEventListener('input', () => {
   const anchor = zoomAnchor()
   setZoom(Number($('zoom').value), anchor.time, anchor.offset)
