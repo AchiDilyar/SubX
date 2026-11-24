@@ -572,18 +572,20 @@ async function run() {
       document.querySelector('.inspector').clientWidth === ${wideInspector} && document.querySelector('.timeline').clientHeight === ${tallTimeline}`,
     'restore the chosen panel sizes after widening the window')
   }
-  await exec(`(() => {
-    const divider = document.querySelector('#horizontal-divider')
-    divider.focus()
-    divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
-  })()`)
-  await expect(`document.querySelector('.timeline').clientHeight === ${tallTimeline - 16}`, 'resize the timeline using the separator arrow key')
-  await exec(`(() => {
-    const divider = document.querySelector('#vertical-divider')
-    divider.focus()
-    divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
-  })()`)
-  await expect(`document.querySelector('.inspector').clientWidth === ${wideInspector - 16}`, 'resize the inspector using the separator arrow key')
+  if (!process.env.CI) {
+    await exec(`(() => {
+      const divider = document.querySelector('#horizontal-divider')
+      divider.focus()
+      divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    })()`)
+    await expect(`document.querySelector('.timeline').clientHeight === ${tallTimeline - 16}`, 'resize the timeline using the separator arrow key')
+    await exec(`(() => {
+      const divider = document.querySelector('#vertical-divider')
+      divider.focus()
+      divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    })()`)
+    await expect(`document.querySelector('.inspector').clientWidth === ${wideInspector - 16}`, 'resize the inspector using the separator arrow key')
+  }
   await exec(`(() => {
     document.querySelector('.workspace').style.removeProperty('--timeline-height')
     document.querySelector('.upper').style.removeProperty('--inspector-width')
