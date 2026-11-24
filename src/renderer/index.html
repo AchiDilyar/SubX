@@ -87,6 +87,7 @@
           <button type="button" role="menuitem" id="menu-redo"><svg class="icon" aria-hidden="true"><use href="#i-redo"></use></svg><span>重做</span><kbd>⇧⌘Z</kbd></button>
           <hr>
           <button type="button" role="menuitem" id="menu-shift"><svg class="icon" aria-hidden="true"><use href="#i-trim-start"></use></svg><span>整体平移…</span></button>
+          <button type="button" role="menuitem" id="menu-retime"><svg class="icon" aria-hidden="true"><use href="#i-split"></use></svg><span>转换帧率…</span></button>
           <button type="button" role="menuitem" id="menu-find"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg><span>查找与替换…</span><kbd>⌘F</kbd></button>
         </div>
       </div>
@@ -416,6 +417,20 @@
       <p id="shift-summary" class="muted" role="status" aria-live="polite"></p>
       <p id="shift-error" class="cue-editor-error" role="alert" hidden></p>
       <div class="dialog-actions"><button id="shift-cancel" type="button">取消</button><button class="primary" type="submit">应用平移</button></div>
+    </form>
+  </dialog>
+  <dialog id="retime-dialog" aria-labelledby="retime-title">
+    <form id="retime-form">
+      <h2 id="retime-title">转换帧率</h2>
+      <p class="dialog-description">按源帧率到目标帧率的比例缩放字幕时间；链接字幕会一起缩放，可一次撤销。</p>
+      <div class="columns">
+        <label>源帧率<select id="retime-source"></select></label>
+        <label>目标帧率<select id="retime-target"></select></label>
+      </div>
+      <label>范围<select id="retime-scope"><option value="all">全部轨道</option><option value="track">当前轨道及链接轨</option><option value="selected">选中的字幕及链接</option></select></label>
+      <p id="retime-summary" class="muted" role="status" aria-live="polite"></p>
+      <p id="retime-error" class="cue-editor-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button id="retime-cancel" type="button">取消</button><button class="primary" type="submit">应用转换</button></div>
     </form>
   </dialog>
   <dialog id="project-change-dialog" aria-labelledby="project-change-title">

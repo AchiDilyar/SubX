@@ -5,6 +5,7 @@ import { assStyleResetCues, assTextCues, captureCue, pasteCue, groupAssLayers, i
 import { findMergePartner, mergedExportText, mergeTracks } from '../core/merge.mjs'
 import { analyzeProject, extendShortCues, fixTrailingSpaces, qcSettings, splitLongCues } from '../core/qc.mjs'
 import { TEXT_TOOL_LABELS, transformCueTexts } from '../core/text-tools.mjs'
+import { nearestRetimeFps, RETIME_FPS, retimeCues } from '../core/retime.mjs'
 import { formatTimecode } from '../core/timecode.mjs'
 import { inspectVtt, writeVtt } from '../core/vtt.mjs'
 import { findTextMatches, replaceTextAt, replaceTextMatches } from '../core/text.mjs'
@@ -2723,6 +2724,97 @@ $('shift-form').addEventListener('submit', event => {
     (adjusted ? ' · 请求值已钳到最早起点' : '') +
     (skipped ? ' · 跳过 ' + skipped + ' 条锁定轨道' : ''), 'success')
 })
+
+// —— 帧率转换 ——
+const retimeDialog = $('retime-dialog')
+const retimeForm = $('retime-form')
+for (const id of ['retime-source', 'retime-target']) {
+  $(id).replaceChildren(...RETIME_FPS.map(fps => new Option(String(fps), String(fps))))
+}
+function retimeEntries() {
+  const scope = $('retime-scope').value
+  const entries = new Map()
+  const add = id => {
+    const owner = trackFor(id)
+    const cue = findCue(project, id)
+    if (owner && cue && !owner.locked) entries.set(cue.id, { track: owner, cue })
+  }
+  if (scope === 'all') {
+    for (const owner of project.tracks) {
+      if (owner.locked) continue
+      for (const cue of owner.cues) entries.set(cue.id, { track: owner, cue })
+    }
+    return [...entries.values()]
+  }
+  const ids = scope === 'track' ? (track()?.cues.map(cue => cue.id) ?? []) : selectedCueIds()
+  for (const id of ids) add(id)
+  for (const pair of project.links ?? []) {
+    if (ids.includes(pair[0])) add(pair[1])
+    if (ids.includes(pair[1])) add(pair[0])
+  }
+  return [...entries.values()]
+}
+function updateRetimeSummary() {
+  const entries = retimeEntries()
+  const source = Number($('retime-source').value)
+  const target = Number($('retime-target').value)
+  const ratio = source > 0 ? target / source : 0
+  $('retime-summary').textContent = entries.length
+    ? '将转换 ' + entries.length + ' 条字幕 · 比例 ' + ratio.toFixed(4) + ' · ' + source + ' → ' + target + ' fps'
+    : '当前范围内没有可转换的字幕。'
+}
+function openRetimeDialog() {
+  if (switchingProject) return
+  if (hasPendingForm() || editorOpen()) {
+    status('请先应用或取消字幕修改，再转换帧率', 'warn')
+    return
+  }
+  const current = rulerFps() || 30
+  const source = nearestRetimeFps(current)
+  $('retime-source').value = String(source)
+  $('retime-target').value = String(source === 25 ? 24 : 25)
+  $('retime-scope').value = 'all'
+  $('retime-error').hidden = true
+  updateRetimeSummary()
+  retimeDialog.showModal()
+}
+retimeForm.addEventListener('submit', event => {
+  event.preventDefault()
+  const source = Number($('retime-source').value)
+  const target = Number($('retime-target').value)
+  if (!Number.isFinite(source) || !Number.isFinite(target) || source <= 0 || target <= 0) {
+    $('retime-error').textContent = '帧率必须为正数。'
+    $('retime-error').hidden = false
+    return
+  }
+  if (Math.abs(source - target) < 0.001) {
+    $('retime-error').textContent = '源帧率与目标帧率相同，无需转换。'
+    $('retime-error').hidden = false
+    return
+  }
+  const entries = retimeEntries()
+  if (!entries.length) {
+    $('retime-error').textContent = '当前范围内没有可转换的字幕。'
+    $('retime-error').hidden = false
+    return
+  }
+  const changes = retimeCues(entries.map(entry => entry.cue), source, target)
+  for (const change of changes) cueDrafts.delete(change.id)
+  edit(() => {
+    for (const change of changes) {
+      const cue = findCue(project, change.id)
+      if (cue) {
+        cue.start = change.start
+        cue.end = change.end
+      }
+    }
+  })
+  retimeDialog.close()
+  status('已转换 ' + changes.length + ' 条字幕 · ' + source + ' → ' + target + ' fps', 'success')
+})
+$('retime-cancel').addEventListener('click', () => retimeDialog.close())
+for (const id of ['retime-source', 'retime-target', 'retime-scope']) $(id).addEventListener('change', updateRetimeSummary)
+action('menu-retime', openRetimeDialog)
 
 // —— 查找与替换 ——
 const findPanel = $('find-panel')
