@@ -5,6 +5,7 @@ import { assStyleResetCues, assTextCues, captureCue, pasteCue, groupAssLayers, i
 import { findMergePartner, mergedExportText, mergeTracks } from '../core/merge.mjs'
 import { analyzeProject, extendShortCues, fixTrailingSpaces, qcSettings, splitLongCues } from '../core/qc.mjs'
 import { TEXT_TOOL_LABELS, transformCueTexts } from '../core/text-tools.mjs'
+import { formatTimecode } from '../core/timecode.mjs'
 import { inspectVtt, writeVtt } from '../core/vtt.mjs'
 import { findTextMatches, replaceTextAt, replaceTextMatches } from '../core/text.mjs'
 
@@ -159,10 +160,14 @@ function lastCueStartingAt(ordered, time) {
   return found
 }
 
-// 预览时间码：有帧率时显示「时:分:秒.帧」，没有帧率时退回毫秒。
+// 预览时间码：按工程设置显示毫秒 / 非丢帧 / 丢帧；没有帧率时退回毫秒。
 function printTimecode(milliseconds) {
   const fps = rulerFps()
-  return fps ? rulerLabel(Math.max(0, milliseconds), fps, 1000) : printTime(Math.max(0, milliseconds), '.')
+  const mode = project.settings?.timecodeFormat ?? 'frames'
+  if (!fps || mode === 'milliseconds') return formatTimecode(milliseconds, fps || 1, 'milliseconds')
+  // 沿用应用既有预览格式（秒与帧之间用点），避免改变已有快捷键/回归语义。
+  if (mode === 'frames') return rulerLabel(milliseconds, fps, 1000)
+  return formatTimecode(milliseconds, fps, mode)
 }
 function rulerLabel(milliseconds, fps, major) {
   if (!fps) {
@@ -1108,6 +1113,7 @@ function render() {
   renderViewport()
   renderStyleList(true)
   for (const key of ['fade', 'watermark']) $('project-' + key).checked = Boolean(project.settings?.[key])
+  $('project-timecode-format').value = project.settings?.timecodeFormat ?? 'frames'
   $('project-fade-duration').value = String(project.settings?.fadeDuration ?? 100)
   $('fade-duration-field').hidden = !project.settings?.fade
   const watermarkImage = project.settings?.watermarkImage
@@ -4370,6 +4376,11 @@ $('project-fade-duration').addEventListener('change', event => {
   event.target.value = String(value)
   edit(() => {
     project.settings = { fade: false, watermark: false, fadeDuration: 100, ...project.settings, fadeDuration: value }
+  })
+})
+$('project-timecode-format').addEventListener('change', event => {
+  edit(() => {
+    project.settings = { fade: false, watermark: false, fadeDuration: 100, ...project.settings, timecodeFormat: event.target.value }
   })
 })
 const toolModes = { 'select-tool': 'select', 'split-tool': 'split', 'select-forward': 'select-forward', 'select-backward': 'select-backward' }

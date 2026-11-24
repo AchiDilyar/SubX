@@ -108,6 +108,10 @@ export function validateProject(project) {
         (!Number.isFinite(project.settings.fadeDuration) || project.settings.fadeDuration < 0 || project.settings.fadeDuration > 2000)))) {
     throw new Error('工程设置无效')
   }
+  const timecodeFormat = project.settings?.timecodeFormat
+  if (timecodeFormat !== undefined && !['milliseconds', 'frames', 'drop'].includes(timecodeFormat)) {
+    throw new Error('工程中的时间码格式无效')
+  }
   const qc = project.settings?.qc
   if (qc !== undefined && (!qc || typeof qc !== 'object' ||
       !Number.isFinite(qc.cps) || qc.cps < 1 || qc.cps > 60 ||
