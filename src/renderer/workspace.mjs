@@ -1719,6 +1719,8 @@ function switchTab(tab, preview = true) {
     $(name + '-panel').hidden = tab !== name
   }
   revealTab(tab)
+  updateTabPages()
+  revealTab(tab)
   if (tab === 'qc') renderQcPanel()
   if (tab === 'text-tools') updateTextToolSummary()
   if (preview) refreshInspectorPreview()
@@ -1796,8 +1798,13 @@ function revealTab(name) {
   if (!button || button.hidden) return
   const box = button.getBoundingClientRect()
   const view = tabsScroll.getBoundingClientRect()
-  if (box.left < view.left) tabsScroll.scrollLeft -= view.left - box.left + 6
-  else if (box.right > view.right) tabsScroll.scrollLeft += box.right - view.right + 6
+  const current = tabsScroll.scrollLeft
+  const left = box.left - view.left + current
+  const right = box.right - view.left + current
+  if (left < current) tabsScroll.scrollLeft = Math.max(0, left - 6)
+  else if (right > current + tabsScroll.clientWidth) {
+    tabsScroll.scrollLeft = Math.min(tabsScroll.scrollWidth, right - tabsScroll.clientWidth + 6)
+  }
 }
 tabsMoreLeft.addEventListener('click', () => showTabsMenu('left'))
 tabsMoreRight.addEventListener('click', () => showTabsMenu('right'))
