@@ -154,6 +154,7 @@
 - UI 图标全部切换为 SVG mask，删除 `src/assets/icons/*.png`（49 个旧 PNG）。
 - 新图标集 69 个原始 SVG 全部落入 `src/assets/icons/`，49 个 `#i-*` 语义名使用 SVG 别名。
 - 渲染链路：`<use href="#i-*">` → CSS `mask-image: url(icons/*.svg)`；颜色继续跟随 `currentColor`。
+- 49 个内联 `<symbol>` 的路径也已替换为新 SVG 内容，避免旧图标路径残留。
 - 打包验证：`app.asar` 内 `subx://app/assets/icons/play.svg` 可加载，桌面 smoke 396 条 PASS。
 - 截图：`out/ui-audit/round44/01-svg-icons.png`、`round44/02-packaged-svg-icons.png`；49 个语义图标画廊见 `round45/01-icon-gallery.png`，69 个原始 SVG 总览见 `round46/01-icon-library.png`。
 - 规范：`src/assets/icons/README.md`；品牌字标/应用图标不属于 UI 图标集。
